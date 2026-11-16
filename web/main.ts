@@ -228,6 +228,8 @@ const feet = ['Foot.FL', 'Foot.FR', 'Foot.BL', 'Foot.BR'].map((n) => byName(khin
 const feetBase = feet.map((f) => f.position.clone());
 const bodyBase = body.position.clone();
 const FOOT_PHASE = [0, Math.PI, Math.PI, 0];
+/** Khina's walking pace in metres a second, when the clock is slow enough to allow it. */
+const WADDLE = 0.75;
 
 // ---------- you ----------
 let player: Player | null = null;
@@ -491,6 +493,11 @@ let gait = 0;
 let inside = false;
 let shown = 1;
 const cur = { bodyY: 0, bodyPitch: 0, bodyRoll: 0, headPitch: 0, headYaw: 0, sink: 0, feet: 1 };
+// Small things Khina does now and then during a long activity, so a real-time hour isn't a still life.
+type Fidget = { kind: 'look' | 'sniff' | 'turn'; until: number; dir: number };
+let fidget: Fidget | null = null;
+let nextFidget = 6;
+let turnOffset = 0;
 
 function frame(dtMs: number) {
   const dt = Math.min(0.1, dtMs / 1000);
@@ -507,7 +514,13 @@ function frame(dtMs: number) {
   let wantInside = false;
   let atSpot = false;
   if (plan) {
-    const frac = (now - plan.start) / Math.max(1e-6, plan.end - plan.start);
+    // Walk at least at a hedgehog's natural pace. On a slow clock (real time) the sim's walk lasts
+    // minutes, so Khina gets there early and starts on the thing; on a fast clock the sim's own
+    // timing is quicker and wins.
+    const total = plan.cum[plan.cum.length - 1]!;
+    const gameFrac = (now - plan.start) / Math.max(1e-6, plan.end - plan.start);
+    const realSec = (now - plan.start) / Math.max(1e-6, snap?.speed ?? 1);
+    const frac = total > 0 ? Math.max(gameFrac, Math.min(1, (WADDLE * realSec) / total)) : 1;
     const { pos, dir } = along(plan, frac);
     const step = Math.hypot(pos.x - pet.position.x, pos.z - pet.position.z);
     speedMs = step / Math.max(dt, 1e-3);
@@ -515,6 +528,12 @@ function frame(dtMs: number) {
     pet.position.x = pos.x;
     pet.position.z = pos.z;
     if (dir.lengthSq() > 0) faceDir = dir;
+    if (frac >= 1 && spot) {
+      atSpot = true;
+      pose = spot.pose;
+      wantInside = !!spot.inside;
+      faceDir = V(spot.face).sub(V(spot.at)).normalize();
+    }
   } else if (a && placed) {
     const target = spot ? V(spot.at, spot.z ?? 0) : pet.position.clone();
     const gap = target.clone().sub(pet.position).setY(0);
@@ -547,8 +566,19 @@ function frame(dtMs: number) {
   shown = damp(shown, inside ? 0 : 1, 8, dt);
   pet.visible = shown > 0.02;
   pet.scale.setScalar(0.4 + 0.6 * shown);
+  // Fidgets: only when settled at a spot, outside, and not curled up asleep.
+  if (!moving && atSpot && pose !== 'curl' && !inside) {
+    nextFidget -= dt;
+    if (!fidget && nextFidget <= 0) {
+      const kinds: Fidget['kind'][] = ['look', 'look', 'sniff', 'turn'];
+      fidget = { kind: kinds[Math.floor(Math.random() * kinds.length)]!, until: tau + 2 + Math.random() * 2, dir: Math.random() < 0.5 ? -1 : 1 };
+      nextFidget = 10 + Math.random() * 20;
+    }
+  }
+  if (fidget && (tau > fidget.until || moving)) fidget = null;
+  turnOffset = damp(turnOffset, fidget?.kind === 'turn' ? 0.55 * fidget.dir : 0, 3, dt);
   if (faceDir) {
-    const want = Math.atan2(faceDir.x, faceDir.z);
+    const want = Math.atan2(faceDir.x, faceDir.z) + turnOffset;
     let d = want - pet.rotation.y;
     d = wrap(d);
     pet.rotation.y += d * (1 - Math.exp(-(moving ? 10 : 4) * dt));
@@ -602,6 +632,16 @@ function frame(dtMs: number) {
         T.headPitch = -0.1;
         T.headYaw = 0.3 * Math.sin(tau * 0.5);
         break;
+    }
+    if (fidget?.kind === 'look') {
+      T.headYaw = 0.85 * fidget.dir;
+      T.headPitch = -0.22;
+    } else if (fidget?.kind === 'sniff') {
+      T.bodyPitch = 0.1;
+      T.headPitch = 0.4 + 0.07 * Math.sin(tau * 16);
+      T.headYaw = 0.25 * fidget.dir;
+    } else if (fidget?.kind === 'turn') {
+      T.bodyRoll = 0.06 * Math.sin(tau * 9);
     }
     // If you come close, Khina looks up at you (unless curled up or inside).
     if (player && pose !== 'curl' && !inside) {
