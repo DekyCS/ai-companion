@@ -1,0 +1,261 @@
+// Talks to the Claude API. Every call is logged, priced and checked against the spend caps.
+// When anything goes wrong the caller falls back to code, so Khina never stops living.
+
+import Anthropic, {
+  APIConnectionError,
+  APIError,
+  AuthenticationError,
+  BadRequestError,
+  PermissionDeniedError,
+  RateLimitError,
+} from '@anthropic-ai/sdk';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { budget, cacheReadFactor, cacheWriteFactor, effort, models, prices, spendLedgerPath } from '../config.ts';
+import type { Rng } from '../rng.ts';
+import type { Completed, State } from '../state.ts';
+import { stamp } from '../time.ts';
+import type { Candidate, Mind, MindStats, Proposal, Sense } from './decide.ts';
+import { decidePrompt, DECIDE_SCHEMA, decideSystem, diaryPrompt, DIARY_SCHEMA, diarySystem, reflectSystem } from './prompts.ts';
+import { reflectPrompt, REFLECT_SCHEMA, type ReflectInput, type ReflectOutput } from './sleep.ts';
+import type { Option } from './score.ts';
+
+interface Usage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
+}
+
+export function costOf(model: string, u: Usage): number {
+  const p = prices[model];
+  if (!p) return 0;
+  const cw = u.cache_creation_input_tokens ?? 0;
+  const cr = u.cache_read_input_tokens ?? 0;
+  return (u.input_tokens * p.input + cw * p.input * cacheWriteFactor + cr * p.input * cacheReadFactor + u.output_tokens * p.output) / 1e6;
+}
+
+/** The prompt asks for 2 sentences; models overrun, so code enforces it. */
+export function keepShort(line: string, maxSentences = 2, maxWords = 45): string {
+  const sentences = line.match(/[^.?]+[.?]+["']?|[^.?]+$/g)?.map((x) => x.trim()) ?? [line];
+  if (sentences.length <= maxSentences && line.split(' ').length <= maxWords) return line;
+  return sentences.slice(0, maxSentences).join(' ');
+}
+
+const today = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+/** Real money spent per real calendar day, shared by every run on this machine. */
+/**
+ * Shared by every run, including runs going on side by side, so it re-reads the file on every
+ * check and every addition. Keeping a copy in memory let parallel runs overwrite each other's
+ * spend and slip past the daily cap.
+ */
+class SpendLedger {
+  private readonly path: string;
+
+  constructor(path: string) {
+    this.path = path;
+  }
+
+  private load(): Record<string, number> {
+    try {
+      return existsSync(this.path) ? JSON.parse(readFileSync(this.path, 'utf8')) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  spentToday(): number {
+    return this.load()[today()] ?? 0;
+  }
+
+  add(usd: number): void {
+    const data = this.load();
+    const k = today();
+    data[k] = (data[k] ?? 0) + usd;
+    mkdirSync(dirname(this.path), { recursive: true });
+    writeFileSync(this.path, JSON.stringify(data, null, 2));
+  }
+}
+
+type Trouble = { kind: 'disable' | 'no-money' | 'busy' | 'offline' | 'other'; why: string };
+
+function classify(err: unknown): Trouble {
+  if (err instanceof AuthenticationError) return { kind: 'disable', why: 'API key was rejected' };
+  if (err instanceof PermissionDeniedError) return { kind: 'disable', why: 'API key is not allowed to use this model' };
+  if (err instanceof RateLimitError) {
+    return err.errorCode === 'enforced_spend_limit_reached'
+      ? { kind: 'no-money', why: 'workspace spend limit reached' }
+      : { kind: 'busy', why: 'rate limited' };
+  }
+  if (err instanceof BadRequestError) {
+    return /credit balance|usage limit/i.test(err.message)
+      ? { kind: 'no-money', why: 'out of API credits' }
+      : { kind: 'other', why: `bad request: ${err.message.slice(0, 160)}` };
+  }
+  if (err instanceof APIConnectionError) return { kind: 'offline', why: 'no connection to the API' };
+  if (err instanceof APIError) {
+    if (err.status === 402) return { kind: 'no-money', why: 'payment required' };
+    return { kind: 'busy', why: `API error ${err.status ?? ''}`.trim() };
+  }
+  return { kind: 'other', why: err instanceof Error ? err.message.slice(0, 160) : String(err) };
+}
+
+export interface ClaudeMindOptions {
+  outDir: string;
+  runCapUsd?: number;
+  dailyCapUsd?: number;
+  ledgerPath?: string;
+}
+
+export class ClaudeMind implements Mind {
+  readonly kind = 'model' as const;
+  private client = new Anthropic({ maxRetries: 2, timeout: 60_000 });
+  private ledger: SpendLedger;
+  private runCap: number;
+  private dailyCap: number;
+  private outDir: string;
+  private disabled: string | null = null;
+  private pausedUntil = 0;
+  private pausedWhy = '';
+  private consecutiveFailures = 0;
+  private s: MindStats = { calls: 0, failures: 0, costUsd: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 };
+
+  constructor(o: ClaudeMindOptions) {
+    this.outDir = o.outDir;
+    this.runCap = o.runCapUsd ?? budget.runUsd;
+    this.dailyCap = o.dailyCapUsd ?? budget.dailyUsd;
+    this.ledger = new SpendLedger(o.ledgerPath ?? spendLedgerPath);
+    mkdirSync(this.outDir, { recursive: true });
+  }
+
+  unavailable(): string | null {
+    if (this.disabled) return this.disabled;
+    if (this.s.costUsd >= this.runCap) return `run spend cap reached ($${this.runCap.toFixed(2)})`;
+    if (this.ledger.spentToday() >= this.dailyCap) return `daily spend cap reached ($${this.dailyCap.toFixed(2)})`;
+    if (Date.now() < this.pausedUntil) return `paused: ${this.pausedWhy}`;
+    return null;
+  }
+
+  stats(): MindStats {
+    return { ...this.s };
+  }
+
+  async propose(s: State, list: Option[], rng: Rng): Promise<Proposal> {
+    const prompt = decidePrompt(s, list, rng);
+    const out = await this.call('decide', s, decideSystem(s), prompt, DECIDE_SCHEMA, 2000);
+    if (!out.ok) return out;
+    const raw = (out.json as { candidates?: unknown }).candidates;
+    if (!Array.isArray(raw)) return { ok: false, why: 'answer had no candidates' };
+    const candidates: Candidate[] = raw
+      .filter((c): c is Record<string, unknown> => typeof c === 'object' && c !== null)
+      .map((c) => ({
+        action: String(c.action ?? ''),
+        reason: String(c.reason ?? ''),
+        weight: Number(c.weight ?? 1),
+        detail: String(c.detail ?? ''),
+      }));
+    return { ok: true, candidates };
+  }
+
+  async narrate(s: State, rec: Completed, recentLines: string[], sense: Sense): Promise<string | null> {
+    if (this.unavailable()) return null;
+    const out = await this.call('diary', s, diarySystem(s), diaryPrompt(s, rec, recentLines, sense), DIARY_SCHEMA, 800);
+    if (!out.ok) return null;
+    const line = String((out.json as { line?: unknown }).line ?? '')
+      .replace(/\s+/g, ' ')
+      .replace(/!/g, '.')
+      .replace(/^["']|["']$/g, '')
+      .trim();
+    return keepShort(line) || null;
+  }
+
+  /** Night jobs on the bigger model. Any failure returns null and code does the night alone. */
+  async reflect(s: State, input: ReflectInput): Promise<ReflectOutput | null> {
+    const out = await this.call('sleep', s, reflectSystem(s), reflectPrompt(s, input), REFLECT_SCHEMA, 6000);
+    if (!out.ok) return null;
+    const j = out.json as Record<string, unknown>;
+    const strings = (v: unknown) => (Array.isArray(v) ? v.map(String) : []);
+    return {
+      page: String(j.page ?? ''),
+      keep: strings(j.keep),
+      drop: strings(j.drop),
+      sheetLine: String(j.sheet_line ?? ''),
+      evidence: String(j.evidence ?? ''),
+    };
+  }
+
+  private async call(
+    job: 'decide' | 'diary' | 'sleep',
+    s: State,
+    system: string,
+    prompt: string,
+    schema: Record<string, unknown>,
+    maxTokens: number,
+  ): Promise<{ ok: true; json: unknown } | { ok: false; why: string }> {
+    const model = models[job];
+    const started = Date.now();
+    const log: Record<string, unknown> = { at: stamp(s.t), t: s.t, job, model };
+    appendFileSync(join(this.outDir, 'prompts.md'), `\n## ${stamp(s.t)} · ${job} · ${model}\n\n\`\`\`\n${prompt}\n\`\`\`\n`);
+    try {
+      const res = await this.client.messages.create({
+        model,
+        max_tokens: maxTokens,
+        system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+        messages: [{ role: 'user', content: prompt }],
+        output_config: { effort: effort[job], format: { type: 'json_schema', schema } },
+      });
+      const cost = costOf(model, res.usage);
+      this.record(cost, res.usage);
+      Object.assign(log, { ms: Date.now() - started, stop: res.stop_reason, usage: res.usage, costUsd: cost });
+
+      if (res.stop_reason === 'refusal') return this.fail(log, 'model refused');
+      if (res.stop_reason === 'max_tokens') return this.fail(log, 'answer was cut off');
+      const text = res.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+      let json: unknown;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        return this.fail({ ...log, text }, 'answer was not valid JSON');
+      }
+      this.consecutiveFailures = 0;
+      this.write({ ...log, ok: true, output: json });
+      return { ok: true, json };
+    } catch (err) {
+      const t = classify(err);
+      if (t.kind === 'disable' || t.kind === 'no-money') this.disabled = t.why;
+      if (t.kind === 'busy') this.pause(60_000, t.why);
+      if (t.kind === 'offline') this.pause(20_000, t.why);
+      return this.fail({ ...log, ms: Date.now() - started, error: t }, t.why);
+    }
+  }
+
+  private record(cost: number, u: Usage): void {
+    this.s.calls += 1;
+    this.s.costUsd += cost;
+    this.s.inputTokens += u.input_tokens + (u.cache_creation_input_tokens ?? 0);
+    this.s.outputTokens += u.output_tokens;
+    this.s.cacheReadTokens += u.cache_read_input_tokens ?? 0;
+    this.ledger.add(cost);
+  }
+
+  private pause(ms: number, why: string): void {
+    this.pausedUntil = Date.now() + ms;
+    this.pausedWhy = why;
+  }
+
+  private fail(log: Record<string, unknown>, why: string): { ok: false; why: string } {
+    this.s.failures += 1;
+    this.consecutiveFailures += 1;
+    if (this.consecutiveFailures >= 5 && !this.disabled) this.disabled = `${this.consecutiveFailures} failures in a row (last: ${why})`;
+    this.write({ ...log, ok: false, why });
+    return { ok: false, why };
+  }
+
+  private write(entry: Record<string, unknown>): void {
+    appendFileSync(join(this.outDir, 'calls.jsonl'), `${JSON.stringify(entry)}\n`);
+  }
+}

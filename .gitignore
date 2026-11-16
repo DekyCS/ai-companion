@@ -1,0 +1,7 @@
+node_modules/
+.env
+runs/
+data/
+video-inspo/
+*.blend1
+.DS_Store

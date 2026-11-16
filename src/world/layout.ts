@@ -1,0 +1,118 @@
+// Where things are in 3D, shared by the Blender scripts (via art/layout.json) and the browser.
+// Metres on the ground plane: x east, y north (Blender's axes; the browser maps y to -z).
+// Places come from places.ts scaled by SCALE, so walking times in the sim match distances here.
+
+import { PLACES, PLACE_IDS, type PlaceId } from './places.ts';
+
+export type XY = [number, number];
+
+/** Metres per unit of the sim's place coordinates. */
+export const SCALE = 3;
+
+export const placeXY = (id: PlaceId): XY => [PLACES[id].x * SCALE, PLACES[id].y * SCALE];
+
+/**
+ * Where paths reach a place, when its centre is taken by something (the well, the bakery, the bench).
+ * Khina walks to here, then to the spot for the action.
+ */
+export const APPROACH: Partial<Record<PlaceId, XY>> = {
+  shed: [5.6, 2.4],
+  bakery: [33, 3.4],
+  square: [30.5, -2],
+  patch: [18, 7.4],
+};
+
+/** Bends in the paths that are not places. */
+export const JUNCTIONS: Record<string, XY> = {
+  lane: [13.5, -1.5],
+  fork: [-4.5, 12],
+};
+
+/** Dirt paths between places and junctions. Khina walks along these. */
+export const PATHS: [string, string][] = [
+  ['burrow', 'shed'],
+  ['burrow', 'lane'],
+  ['shed', 'lane'],
+  ['lane', 'patch'],
+  ['lane', 'stream'],
+  ['lane', 'square'],
+  ['square', 'bakery'],
+  ['patch', 'bakery'],
+  ['square', 'halt'],
+  ['burrow', 'fork'],
+  ['fork', 'woods'],
+  ['fork', 'clearing'],
+];
+
+export interface Spot {
+  /** Where Khina stands. */
+  at: XY;
+  /** Height above the ground (on a bench, say). */
+  z?: number;
+  /** A point Khina faces. */
+  face: XY;
+  /** Inside a building: Khina is out of sight. */
+  inside?: boolean;
+  /** How Khina holds still there. */
+  pose: 'stand' | 'sit' | 'curl' | 'sniff' | 'work' | 'eat' | 'paddle';
+}
+
+const BURROW_DOOR: XY = [0, 0.6];
+const BAKERY_DOOR: XY = [33, 4.6];
+
+/** Where each action happens. */
+export const SPOTS: Record<string, Spot> = {
+  sleep: { at: BURROW_DOOR, face: [0, 3], inside: true, pose: 'curl' },
+  nap: { at: BURROW_DOOR, face: [0, 3], inside: true, pose: 'curl' },
+  snack: { at: BURROW_DOOR, face: [0, 3], inside: true, pose: 'eat' },
+  tidy: { at: BURROW_DOOR, face: [0, 3], inside: true, pose: 'work' },
+  rain: { at: BURROW_DOOR, face: [0, 3], inside: true, pose: 'sit' },
+  letterbox: { at: [2.2, -1.1], face: [2.2, 0], pose: 'stand' },
+  whittle: { at: [5, 3.2], face: [5, 5], pose: 'work' },
+  draw: { at: [5.9, 3.2], face: [5.9, 5], pose: 'work' },
+  sort: { at: [4.1, 3.2], face: [4.1, 5], pose: 'work' },
+  tinker: { at: [5.3, 3.2], face: [5.3, 5], pose: 'work' },
+  crusts: { at: [30.6, 3.4], face: [29.6, 3.6], pose: 'eat' },
+  warm: { at: BAKERY_DOOR, face: [33, 7], inside: true, pose: 'sit' },
+  bench: { at: [27, -0.15], z: 0.5, face: [27, -4], pose: 'sit' },
+  chat: { at: [29.4, -4.4], face: [27, -3.4], pose: 'stand' },
+  weed: { at: [17, 8], face: [17, 10], pose: 'work' },
+  pea: { at: [20.6, 8], face: [20.6, 10], pose: 'eat' },
+  paddle: { at: [10, -17.2], face: [8, -17.6], pose: 'paddle' },
+  fish: { at: [12.4, -15.7], face: [12.4, -18], pose: 'sit' },
+  dam: { at: [14.8, -16.4], face: [15, -18], pose: 'work' },
+  forage: { at: [-16.4, 16.6], face: [-15, 15], pose: 'sniff' },
+  birds: { at: [-18.6, 18.4], face: [-19, 21], pose: 'sit' },
+  explore: { at: [-24, 24], face: [-27, 27], pose: 'sniff' },
+  poke: { at: [-6.6, 31], face: [-5.5, 32], pose: 'sniff' },
+  moss: { at: [-9.6, 29.4], face: [-9, 31], pose: 'curl' },
+  train: { at: [44.4, -9], z: 0.45, face: [47, -9], pose: 'sit' },
+  timetable: { at: [44.4, -5.6], z: 0.45, face: [45.4, -5.6], pose: 'stand' },
+};
+
+/** Chimney tops, where the browser puffs smoke when a fire is lit. */
+export const CHIMNEYS: Record<string, [number, number, number]> = {
+  burrow: [1.5, 4.4, 3.1],
+  bakery: [34.8, 8.6, 6.0],
+};
+
+/** Every node Khina can walk through, with its position. */
+export function nodes(): Record<string, XY> {
+  const out: Record<string, XY> = { ...JUNCTIONS };
+  for (const id of PLACE_IDS) out[id] = APPROACH[id] ?? placeXY(id);
+  return out;
+}
+
+/** Everything the Blender scripts need, as plain JSON. */
+export function layoutJson(): object {
+  return {
+    scale: SCALE,
+    places: Object.fromEntries(PLACE_IDS.map((id) => [id, placeXY(id)])),
+    junctions: JUNCTIONS,
+    nodes: nodes(),
+    paths: PATHS,
+    spots: SPOTS,
+    doors: { burrow: BURROW_DOOR, bakery: BAKERY_DOOR },
+    chimneys: CHIMNEYS,
+  };
+}

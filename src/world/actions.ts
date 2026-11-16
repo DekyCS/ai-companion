@@ -1,0 +1,829 @@
+// Everything Khina can do in the village. Code decides what each action does to
+// each need and what actually happens; the model only proposes and narrates.
+
+import type { Effects } from '../config.ts';
+import type { Rng } from '../rng.ts';
+import { pantryTotal, type Activity, type FoodId, type State } from '../state.ts';
+import { clock, hourOf, isDark, isNight, nextMorning } from '../time.ts';
+import type { PlaceId } from './places.ts';
+import { bakeryOpen, isWet, names, nextTrain, presentAt, verb, VILLAGERS, type VillagerId } from './village.ts';
+
+export interface Ctx {
+  s: State;
+  rng: Rng;
+  /** When the action would start: now, plus any walking time. */
+  at: number;
+}
+
+export interface Outcome {
+  /** What actually happened, in plain words, no subject: "found a blue button". */
+  text: string;
+  /** Need changes on top of the action's normal effects, applied on completion. */
+  extra?: Effects;
+  thought?: { key: string; text: string; value: number; hours: number };
+  pantry?: Partial<Record<FoodId, number>>;
+  find?: string;
+  made?: string;
+}
+
+export type Topic =
+  | 'rest' | 'food' | 'home' | 'making' | 'social' | 'nature' | 'water' | 'exploring' | 'trains' | 'post';
+
+export interface ActionDef {
+  id: string;
+  /** 'here' means wherever Khina already is. */
+  place: PlaceId | 'here';
+  /** Shown in the menu: "forage for beetles and berries". */
+  label: string;
+  /** Shown on the status line: "foraging for beetles and berries". */
+  doing: string;
+  /** Used in summaries of recent activity: "foraging". */
+  gist: string;
+  topic: Topic;
+  effort: 'rest' | 'easy' | 'hard';
+  minutes: [number, number];
+  /** What the action does to each need in total, spread over its length. */
+  effects: Effects;
+  /** Need changes the outcome usually brings, used only for scoring. */
+  expect?: (c: Ctx) => Effects;
+  /** Replaces effects + expect for scoring. */
+  estimate?: (c: Ctx) => Effects;
+  /** For open-ended actions: what it does per game hour while it runs. */
+  perHour?: Effects;
+  /** If set, the model may fill in a few words of free content ("what to whittle"). */
+  detailAsk?: string;
+  /** Free content used when code decides alone. */
+  details?: string[];
+  /** Returns why the action is impossible, or null if it is possible. */
+  blocked?: (c: Ctx) => string | null;
+  /** Extra facts shown next to the option: who is there, when the next train is. */
+  note?: (c: Ctx) => string;
+  duration?: (c: Ctx) => number;
+  /** For open-ended actions: is it finished? Checked every minute. */
+  done?: (s: State, act: Activity) => boolean;
+  begin?: (c: Ctx, act: Activity) => void;
+  scoreMult?: (c: Ctx) => number;
+  outcome?: (c: Ctx, act: Activity) => Outcome;
+  /** False for actions too small to be worth a diary line. */
+  diary?: boolean;
+}
+
+const FOOD: Record<FoodId, { one: string; fullness: number }> = {
+  berries: { one: 'a few dried blackberries', fullness: 14 },
+  beetles: { one: 'a dried beetle', fullness: 18 },
+  crusts: { one: 'a stale crust', fullness: 22 },
+  peas: { one: 'a pea pod', fullness: 12 },
+};
+
+const FOOD_WORDS: Record<FoodId, [string, string]> = {
+  berries: ['blackberry', 'blackberries'],
+  beetles: ['beetle', 'beetles'],
+  crusts: ['crust', 'crusts'],
+  peas: ['pea pod', 'pea pods'],
+};
+
+function pluralFood(f: FoodId, n: number): string {
+  return `${n} ${FOOD_WORDS[f][n === 1 ? 0 : 1]}`;
+}
+
+function takeRandom<T>(rng: Rng, list: T[]): T | undefined {
+  if (list.length === 0) return undefined;
+  const i = Math.floor(rng.next() * list.length);
+  return list.splice(i, 1)[0];
+}
+
+const isNightStart = (t: number) => isNight(t) || hourOf(t) >= 20;
+
+/** Who was at the place when the action started (people come and go on the hour). */
+const whoWas = (act: Activity): VillagerId[] => act.who ?? [];
+
+export const ACTIONS: ActionDef[] = [
+  // The burrow
+  {
+    id: 'sleep',
+    place: 'burrow',
+    label: 'go to bed',
+    doing: 'asleep in bed',
+    gist: 'slept',
+    topic: 'rest',
+    effort: 'rest',
+    minutes: [0, 0],
+    effects: {},
+    perHour: { rest: 12, calm: 1.5 },
+    blocked: ({ s, at }) => (isNightStart(at) || s.needs.rest < 25 ? null : 'it was far too early for bed'),
+    estimate: ({ s }) => ({ rest: 100 - s.needs.rest, calm: 4 }),
+    scoreMult: ({ at }) => (isNight(at) ? 3 : 1),
+    begin: ({ rng }, act) => {
+      // Going down after 18:00 counts as the night's sleep, so an evening collapse does not
+      // end in a hedgehog wide awake at midnight.
+      const h = hourOf(act.startedAt);
+      if (h >= 18 || h < 6) act.wakeAfter = nextMorning(act.startedAt) + rng.int(0, 75);
+    },
+    done: (s, act) => {
+      if (s.needs.fullness < 6) return true;
+      if (act.wakeAfter !== undefined) {
+        return (s.t >= act.wakeAfter && s.needs.rest >= 85) || s.t >= act.wakeAfter + 180;
+      }
+      return s.needs.rest >= 75;
+    },
+    outcome: ({ s }, act) => {
+      const hungry = s.needs.fullness < 6;
+      const rain = isWet(s.world.weather) ? ', to the sound of rain on the oak roots' : '';
+      return {
+        text: `slept from ${clock(act.startedAt)} to ${clock(s.t)}${rain}${hungry ? ', and woke up because of hunger' : ''}`,
+        thought: hungry ? { key: 'woke-hungry', text: 'Woke up with an empty belly', value: -3, hours: 3 } : undefined,
+      };
+    },
+  },
+  {
+    id: 'nap',
+    place: 'burrow',
+    label: 'nap in the armchair',
+    doing: 'napping in the armchair',
+    gist: 'a nap',
+    topic: 'rest',
+    effort: 'rest',
+    minutes: [30, 60],
+    effects: { rest: 15, calm: 4 },
+    blocked: ({ s, at }) =>
+      isNight(at) ? 'it was bedtime, not nap time' : s.needs.rest >= 60 ? 'Khina was not tired enough to nap' : null,
+    outcome: ({ rng }) => ({
+      text: rng.pick([
+        'napped in the armchair',
+        'napped in the armchair with one paw hanging off the side',
+        'dozed in the armchair, never quite asleep',
+      ]),
+    }),
+  },
+  {
+    id: 'snack',
+    place: 'burrow',
+    label: 'nibble something from the pantry',
+    doing: 'nibbling something from the pantry',
+    gist: 'a snack',
+    topic: 'food',
+    effort: 'rest',
+    minutes: [8, 15],
+    effects: { fullness: 16 },
+    blocked: ({ s }) => (pantryTotal(s) === 0 ? 'the pantry was empty' : null),
+    note: ({ s }) => {
+      const n = pantryTotal(s);
+      return n <= 2 ? `only ${n} thing${n === 1 ? '' : 's'} left in the pantry` : '';
+    },
+    outcome: ({ s, rng }) => {
+      const kinds = (Object.keys(s.pantry) as FoodId[]).filter((f) => s.pantry[f] > 0);
+      const food = rng.weighted(kinds, (f) => s.pantry[f]);
+      const emptyAfter = pantryTotal(s) === 1;
+      return {
+        text: `ate ${FOOD[food].one} from the pantry${emptyAfter ? '; the pantry is empty now' : ''}`,
+        pantry: { [food]: -1 },
+        extra: { fullness: FOOD[food].fullness - 16 },
+        thought: emptyAfter ? { key: 'pantry-empty', text: 'The pantry is empty', value: -2, hours: 8 } : undefined,
+      };
+    },
+  },
+  {
+    id: 'tidy',
+    place: 'burrow',
+    label: 'tidy the burrow',
+    doing: 'tidying the burrow',
+    gist: 'tidying up',
+    topic: 'home',
+    effort: 'easy',
+    minutes: [20, 35],
+    effects: { calm: 10, making: 6, rest: -3 },
+    outcome: ({ s, rng }) => ({
+      text: rng.pick([
+        'swept the old leaves out of the burrow',
+        'aired the bedding and pushed the armchair back where it belongs',
+        'found a lost acorn under the bed and put it on the shelf',
+        ...(s.finds.length >= 2 ? ['rearranged the shelf of finds'] : []),
+      ]),
+    }),
+  },
+  {
+    id: 'rain',
+    place: 'burrow',
+    label: 'curl up by the door and listen to the rain',
+    doing: 'listening to the rain',
+    gist: 'listening to the rain',
+    topic: 'rest',
+    effort: 'rest',
+    minutes: [20, 40],
+    effects: { calm: 16, rest: 6 },
+    blocked: ({ s }) => (isWet(s.world.weather) ? null : 'it had stopped raining'),
+    outcome: () => ({ text: 'curled up by the door of the burrow and listened to the rain on the oak roots' }),
+  },
+  {
+    id: 'letterbox',
+    place: 'burrow',
+    label: 'check the letterbox',
+    doing: 'checking the letterbox',
+    gist: 'checking the post',
+    topic: 'post',
+    effort: 'easy',
+    minutes: [2, 4],
+    effects: { novelty: 1 },
+    expect: ({ s }) => (s.world.flagSeen && s.world.letters.length > 0 ? { novelty: 10, company: 10 } : {}),
+    note: ({ s }) => (s.world.flagSeen && s.world.letters.length > 0 ? 'the little flag on it is up' : ''),
+    outcome: ({ s }) => {
+      const letter = s.world.letters.shift();
+      if (s.world.letters.length === 0) s.world.flagSeen = false;
+      if (!letter) {
+        return {
+          text: 'the letterbox was empty',
+          thought: { key: 'letterbox-empty', text: 'The letterbox was empty again', value: -1, hours: 2 },
+        };
+      }
+      const from = VILLAGERS[letter.from].name;
+      return {
+        text: `found a note from ${from} in the letterbox. It said: "${letter.text}"`,
+        extra: { novelty: 10, company: 10 },
+        thought: { key: 'letter', text: `Got a note from ${from}`, value: 4, hours: 8 },
+      };
+    },
+  },
+
+  // The shed
+  {
+    id: 'whittle',
+    place: 'shed',
+    label: 'whittle something at the workbench',
+    doing: 'whittling at the workbench',
+    gist: 'whittling',
+    topic: 'making',
+    effort: 'easy',
+    minutes: [40, 75],
+    effects: { making: 30, novelty: 5, rest: -5 },
+    detailAsk: 'what to whittle',
+    details: ['a little spoon', 'a peg with a face on it', 'a tiny boat', 'an owl the size of an acorn', 'a whistle', 'a bead'],
+    outcome: ({ rng }, act) =>
+      rng.chance(0.75)
+        ? {
+            text: `whittled ${act.detail}`,
+            made: `${act.detail} (whittled)`,
+            thought: { key: 'made', text: `Whittled ${act.detail}`, value: 4, hours: 10 },
+          }
+        : {
+            text: `started whittling ${act.detail} but the wood split halfway`,
+            extra: { making: -14 },
+            thought: { key: 'split', text: `The wood split while whittling ${act.detail}`, value: -3, hours: 4 },
+          },
+  },
+  {
+    id: 'draw',
+    place: 'shed',
+    label: 'draw with charcoal on a strip of bark',
+    doing: 'drawing with charcoal',
+    gist: 'drawing',
+    topic: 'making',
+    effort: 'easy',
+    minutes: [30, 55],
+    effects: { making: 24, calm: 4 },
+    detailAsk: 'what to draw',
+    details: ['the old oak', 'Bramwell asleep behind the counter', 'the train', 'a very large beetle', 'rain on the stream'],
+    outcome: ({ rng }, act) =>
+      rng.chance(0.85)
+        ? {
+            text: `drew ${act.detail} in charcoal on bark`,
+            made: `a charcoal drawing of ${act.detail.replace(/^(an? )?(quick )?(charcoal )?(sketch|drawing|picture) of /i, '')}`,
+            thought: { key: 'made', text: `Drew ${act.detail}`, value: 3, hours: 8 },
+          }
+        : {
+            text: `started drawing ${act.detail}, smudged it with a paw and gave up`,
+            extra: { making: -10 },
+            thought: { key: 'smudged', text: 'Smudged a drawing', value: -2, hours: 3 },
+          },
+  },
+  {
+    id: 'sort',
+    place: 'shed',
+    label: 'sort the finds on the shelf',
+    doing: 'sorting the finds',
+    gist: 'sorting finds',
+    topic: 'home',
+    effort: 'rest',
+    minutes: [15, 30],
+    effects: { calm: 12, making: 5 },
+    blocked: ({ s }) => (s.finds.length < 2 ? 'there was not enough on the shelf to sort' : null),
+    outcome: ({ s, rng }) => {
+      const some = rng.shuffle(s.finds.map((f) => f.name)).slice(0, 3);
+      return { text: `sorted the finds on the shelf, putting ${some.join(', then ')} in a row` };
+    },
+  },
+  {
+    id: 'tinker',
+    place: 'shed',
+    label: 'tinker with a broken thing',
+    doing: 'tinkering',
+    gist: 'tinkering',
+    topic: 'making',
+    effort: 'easy',
+    minutes: [30, 60],
+    effects: { making: 18, novelty: 8, calm: -2 },
+    blocked: ({ s }) => (s.world.projects.every((p) => p.done) ? 'there was nothing left to fix' : null),
+    note: ({ s }) => {
+      const p = s.world.projects.find((x) => !x.done);
+      return p ? `working on ${p.name}` : '';
+    },
+    outcome: ({ s, rng }) => {
+      const p = s.world.projects.find((x) => !x.done);
+      if (!p) return { text: 'found nothing left to fix' };
+      p.progress += 1;
+      if (p.progress >= p.needed && (rng.chance(0.6) || p.progress >= p.needed + 2)) {
+        p.done = true;
+        return {
+          text: `got ${p.name} working at last`,
+          extra: { making: 10 },
+          made: `${p.name}, fixed`,
+          thought: { key: 'fixed', text: `Fixed ${p.name}`, value: 7, hours: 24 },
+        };
+      }
+      return {
+        text: rng.pick([
+          `tinkered with ${p.name}; it still does not work`,
+          `took ${p.name} apart and put it back together, slightly better`,
+          `got ${p.name} to make one hopeful noise, then nothing`,
+        ]),
+      };
+    },
+  },
+
+  // The bakery
+  {
+    id: 'crusts',
+    place: 'bakery',
+    label: "ask Bramwell for yesterday's crusts",
+    doing: "eating yesterday's crusts at the bakery",
+    gist: 'crusts from Bramwell',
+    topic: 'food',
+    effort: 'easy',
+    minutes: [8, 15],
+    effects: { fullness: 24, company: 10 },
+    blocked: ({ at }) => (bakeryOpen(at) ? null : 'the bakery was shut'),
+    expect: ({ s, at }) => (s.world.bakeSpecialUntil > at ? { novelty: 8, calm: 4 } : {}),
+    note: ({ s, at }) => (s.world.bakeSpecialUntil > at ? 'Bramwell has seed cake today' : ''),
+    outcome: ({ s, rng }) => {
+      if (s.world.bakeSpecialUntil > s.t) {
+        s.world.bakeSpecialUntil = -1;
+        return {
+          text: 'Bramwell handed over two crusts and a corner of fresh seed cake, still warm',
+          extra: { novelty: 8, calm: 4 },
+          thought: { key: 'seedcake-ate', text: 'Got a corner of warm seed cake', value: 4, hours: 8 },
+        };
+      }
+      const r = rng.next();
+      if (r < 0.2) {
+        return {
+          text: 'Bramwell was busy and only nodded at the crust basket, so Khina ate two crusts alone by the door',
+          extra: { company: -7 },
+          thought: { key: 'bramwell-busy', text: 'Bramwell was too busy to talk', value: -2, hours: 3 },
+        };
+      }
+      if (r < 0.5) {
+        return {
+          text: 'Bramwell handed over two crusts, plus an extra one for Khina to take home for the pantry',
+          pantry: { crusts: 1 },
+          thought: { key: 'bramwell-kind', text: 'Bramwell slipped me an extra crust', value: 3, hours: 6 },
+        };
+      }
+      return { text: `Bramwell handed over two crusts and grumbled about the ${s.world.weather === 'clear' ? 'heat of the ovens' : 'weather'}` };
+    },
+  },
+  {
+    id: 'warm',
+    place: 'bakery',
+    label: 'hang about in the warm bakery',
+    doing: 'hanging about in the warm bakery',
+    gist: 'loitering at the bakery',
+    topic: 'social',
+    effort: 'rest',
+    minutes: [15, 30],
+    effects: { company: 10, calm: 6, fullness: 3 },
+    blocked: ({ at }) => (bakeryOpen(at) ? null : 'the bakery was shut'),
+    note: ({ s }) => {
+      const others = presentAt(s.world, 'bakery').filter((v) => v !== 'bramwell');
+      return others.length ? `${names(others)} ${verb(others, true)} in there` : '';
+    },
+    outcome: ({ rng }, act) => {
+      const others = whoWas(act).filter((v) => v !== 'bramwell');
+      const biscuit = rng.chance(0.3);
+      return {
+        text:
+          'stood by the warm oven while Bramwell worked' +
+          (others.length ? `; ${names(others)} came in` : '') +
+          (biscuit ? '; got given a broken biscuit' : ''),
+        extra: { company: others.length ? 5 : 0, fullness: biscuit ? 6 : 0 },
+      };
+    },
+  },
+
+  // The square
+  {
+    id: 'bench',
+    place: 'square',
+    label: 'sit on the bench and watch the village go by',
+    doing: 'people-watching from the bench',
+    gist: 'people-watching',
+    topic: 'social',
+    effort: 'rest',
+    minutes: [20, 40],
+    effects: { company: 7, calm: 5, novelty: 5 },
+    outcome: (_c, act) => {
+      const p = whoWas(act);
+      return p.length
+        ? { text: `sat on the bench in the square; ${names(p)} ${verb(p, false)} about` }
+        : { text: 'sat on the bench in the square; nobody much came by', extra: { company: -5 } };
+    },
+  },
+  {
+    id: 'chat',
+    place: 'square',
+    label: 'chat with whoever is around',
+    doing: 'chatting in the square',
+    gist: 'a chat',
+    topic: 'social',
+    effort: 'easy',
+    minutes: [10, 25],
+    effects: { company: 22 },
+    detailAsk: 'what to talk about',
+    details: ['the weather', 'the trains', 'what Bramwell is baking', 'a funny-shaped cloud', 'the frog under the bridge'],
+    blocked: ({ s }) => (presentAt(s.world, 'square').length ? null : 'nobody was around'),
+    note: ({ s }) => {
+      const p = presentAt(s.world, 'square');
+      return p.length ? `${names(p)} ${verb(p, true)} there` : '';
+    },
+    outcome: ({ s, rng }, act) => {
+      const pool = whoWas(act);
+      if (pool.length === 0) {
+        return { text: 'looked for someone to talk to, but everyone had gone', extra: { company: -15 } };
+      }
+      const who: VillagerId = rng.pick(pool);
+      const name = VILLAGERS[who].name;
+      if (s.needs.calm < 30 && rng.chance(0.4)) {
+        return {
+          text: `tried to talk with ${name} about ${act.detail} but felt prickly and cut it short`,
+          extra: { company: -12, calm: -4 },
+          thought: { key: 'awkward', text: `Cut a chat with ${name} short`, value: -3, hours: 4 },
+        };
+      }
+      if (who === 'traveller') {
+        return {
+          text: `talked with the traveller about ${act.detail}; they were waiting for the next train to the city`,
+          extra: { novelty: 12 },
+          thought: { key: 'traveller', text: 'Talked to a traveller going to the city', value: 4, hours: 12 },
+        };
+      }
+      return {
+        text: `talked with ${name} about ${act.detail}`,
+        thought: { key: `chat-${who}`, text: `Had a chat with ${name}`, value: 3, hours: 6 },
+      };
+    },
+  },
+
+  // The vegetable patch
+  {
+    id: 'weed',
+    place: 'patch',
+    label: 'weed the vegetable patch',
+    doing: 'weeding the vegetable patch',
+    gist: 'weeding',
+    topic: 'nature',
+    effort: 'hard',
+    minutes: [30, 50],
+    effects: { making: 10, calm: 10, rest: -6, fullness: -3 },
+    expect: ({ s }) => (presentAt(s.world, 'patch').includes('wren') ? { company: 8 } : {}),
+    blocked: ({ at }) => (isDark(at) ? 'it was too dark to tell weeds from peas' : null),
+    note: ({ s }) => (presentAt(s.world, 'patch').includes('wren') ? 'Old Wren is working there' : ''),
+    outcome: ({ rng }, act) => {
+      if (!whoWas(act).includes('wren')) return { text: 'weeded a row of carrots alone' };
+      const peas = rng.chance(0.25);
+      return {
+        text: `weeded a row of carrots alongside Old Wren, who hummed the whole time${peas ? '; Old Wren sent Khina home with two pea pods' : ''}`,
+        extra: { company: 8 },
+        pantry: peas ? { peas: 2 } : undefined,
+      };
+    },
+  },
+  {
+    id: 'pea',
+    place: 'patch',
+    label: 'pinch a pea pod off the vine',
+    doing: 'pinching a pea pod',
+    gist: 'pinching a pea pod',
+    topic: 'food',
+    effort: 'easy',
+    minutes: [5, 10],
+    effects: { fullness: 12 },
+    outcome: ({ rng }, act) => {
+      if (!whoWas(act).includes('wren')) return { text: 'pinched a pea pod off the vine; nobody saw' };
+      return rng.chance(0.5)
+        ? { text: 'pinched a pea pod; Old Wren saw and laughed', extra: { company: 5 } }
+        : {
+            text: 'pinched a pea pod; Old Wren saw and tutted',
+            extra: { calm: -5 },
+            thought: { key: 'tutted', text: 'Old Wren tutted at me', value: -2, hours: 3 },
+          };
+    },
+  },
+
+  // The stream
+  {
+    id: 'paddle',
+    place: 'stream',
+    label: 'paddle in the shallows',
+    doing: 'paddling in the shallows',
+    gist: 'paddling',
+    topic: 'water',
+    effort: 'easy',
+    minutes: [15, 30],
+    effects: { calm: 12, novelty: 6, rest: -2 },
+    blocked: ({ s }) => (s.world.weather === 'rain' ? 'the stream was running too fast after the rain' : null),
+    outcome: ({ rng }) => ({
+      text: rng.pick([
+        'paddled in the shallows; the water was cold',
+        'paddled in the shallows and chased a water boatman',
+        'paddled until the paws went numb',
+      ]),
+    }),
+  },
+  {
+    id: 'fish',
+    place: 'stream',
+    label: 'watch the fish',
+    doing: 'watching the fish',
+    gist: 'fish-watching',
+    topic: 'water',
+    effort: 'rest',
+    minutes: [15, 35],
+    effects: { calm: 14, rest: 3 },
+    blocked: ({ at }) => (isDark(at) ? 'it was too dark to see the fish' : null),
+    outcome: ({ s, rng }) =>
+      s.world.heron
+        ? {
+            text: 'was watching the fish when a heron landed close by; Khina curled up tight until it left',
+            extra: { calm: -18 },
+            thought: { key: 'heron', text: 'A heron landed right next to me', value: -5, hours: 6 },
+          }
+        : {
+            text: rng.pick([
+              'watched a silver fish that kept coming back to the same stone',
+              'watched the minnows dart about in the shallows',
+              'lay on the bank and watched a fat trout not move at all',
+            ]),
+          },
+  },
+  {
+    id: 'dam',
+    place: 'stream',
+    label: 'build a little pebble dam',
+    doing: 'building a pebble dam',
+    gist: 'a pebble dam',
+    topic: 'making',
+    effort: 'hard',
+    minutes: [30, 50],
+    effects: { making: 18, novelty: 7, rest: -6 },
+    outcome: ({ rng }) =>
+      rng.chance(0.7)
+        ? {
+            text: 'built a pebble dam across a side trickle of the stream, and it held',
+            made: 'a pebble dam on the stream',
+            thought: { key: 'dam', text: 'Built a dam that held', value: 3, hours: 6 },
+          }
+        : {
+            text: 'built a pebble dam, and the stream knocked it over',
+            extra: { making: -8 },
+            thought: { key: 'dam', text: 'The stream knocked my dam down', value: -2, hours: 3 },
+          },
+  },
+
+  // The woods
+  {
+    id: 'forage',
+    place: 'woods',
+    label: 'forage for beetles and berries',
+    doing: 'foraging in the woods',
+    gist: 'foraging',
+    topic: 'food',
+    effort: 'easy',
+    minutes: [30, 55],
+    effects: { fullness: 10, novelty: 4, rest: -7 },
+    outcome: ({ s, rng }) => {
+      const owls = isDark(s.t);
+      const owlText = owls ? '; every owl hoot made Khina jump' : '';
+      const owlCalm = owls ? -6 : 0;
+      if (rng.chance(0.15)) {
+        return {
+          text: `foraged in the woods and found nothing but wet leaves${owlText}`,
+          extra: { calm: owlCalm },
+          thought: { key: 'forage-none', text: 'Came back from foraging with nothing', value: -2, hours: 3 },
+        };
+      }
+      const berries = rng.int(0, 3);
+      const beetles = rng.int(1, 2);
+      const brought = [
+        ...(berries ? [pluralFood('berries', berries)] : []),
+        pluralFood('beetles', beetles),
+      ].join(' and ');
+      return {
+        text: `foraged in the woods, ate some on the spot and brought home ${brought}${owlText}`,
+        pantry: { berries, beetles },
+        extra: { calm: owlCalm },
+      };
+    },
+  },
+  {
+    id: 'birds',
+    place: 'woods',
+    label: 'sit still and listen to the birds',
+    doing: 'listening to the birds',
+    gist: 'birdsong',
+    topic: 'nature',
+    effort: 'rest',
+    minutes: [15, 30],
+    effects: { calm: 14, novelty: 4 },
+    blocked: ({ at }) => (isDark(at) ? 'the birds had gone quiet for the night' : null),
+    outcome: ({ rng }) => ({
+      text: rng.pick([
+        'sat still under a fern and listened to a blackbird',
+        'listened to two wrens arguing in a bramble',
+        'counted eleven different bird calls, then lost count',
+      ]),
+    }),
+  },
+  {
+    id: 'explore',
+    place: 'woods',
+    label: 'follow a path Khina has not tried',
+    doing: 'trying a new path through the woods',
+    gist: 'a new path',
+    topic: 'exploring',
+    effort: 'hard',
+    minutes: [30, 60],
+    effects: { novelty: 26, calm: -4, rest: -10, fullness: -3 },
+    blocked: ({ at }) => (isDark(at) ? 'it was too dark for new paths, and owls were about' : null),
+    note: ({ s, at }) => (s.world.woodsNewsUntil > at ? 'a big tree came down here; there may be new paths' : ''),
+    expect: ({ s, at }) => (s.world.woodsNewsUntil > at ? { novelty: 10 } : {}),
+    outcome: ({ s, rng }) => {
+      const r = rng.next();
+      if (r < 0.25) {
+        return {
+          text: 'took a new path, got turned around and took ages to find the way back',
+          extra: { calm: -10, rest: -5 },
+          thought: { key: 'lost', text: 'Got lost in the woods', value: -4, hours: 5 },
+        };
+      }
+      if (r < 0.6) {
+        const find = takeRandom(rng, s.world.findsLeft);
+        if (find) {
+          return {
+            text: `took a new path and found ${find}`,
+            find,
+            thought: { key: 'find', text: `Found ${find}`, value: 5, hours: 12 },
+          };
+        }
+      }
+      const sight = takeRandom(rng, s.world.sightsLeft);
+      if (sight) {
+        return {
+          text: `took a new path and came out at ${sight}`,
+          thought: { key: 'sight', text: `Came across ${sight}`, value: 4, hours: 12 },
+        };
+      }
+      return {
+        text: 'looked for a new path, but every one led somewhere already known',
+        extra: { novelty: -14 },
+        thought: { key: 'no-new-paths', text: 'Every path in the woods is an old one now', value: -2, hours: 12 },
+      };
+    },
+  },
+
+  // The clearing
+  {
+    id: 'poke',
+    place: 'clearing',
+    label: 'poke around in the moss for odd things',
+    doing: 'poking around in the moss',
+    gist: 'poking about',
+    topic: 'exploring',
+    effort: 'easy',
+    minutes: [20, 40],
+    effects: { novelty: 14 },
+    outcome: ({ s, rng }) => {
+      const r = rng.next();
+      if (r < 0.35) {
+        const find = takeRandom(rng, s.world.findsLeft);
+        if (find) {
+          return {
+            text: `poked about in the moss and found ${find}`,
+            find,
+            thought: { key: 'find', text: `Found ${find}`, value: 4, hours: 12 },
+          };
+        }
+      }
+      if (r < 0.75) return { text: 'poked about in the moss and found a fat beetle, and took it home for the pantry', pantry: { beetles: 1 } };
+      return { text: 'poked about in the moss and found nothing but more moss' };
+    },
+  },
+  {
+    id: 'moss',
+    place: 'clearing',
+    label: 'lie in the moss and watch the clouds',
+    doing: 'lying in the moss',
+    gist: 'cloud-watching',
+    topic: 'nature',
+    effort: 'rest',
+    minutes: [20, 40],
+    effects: { calm: 16, rest: 8 },
+    blocked: ({ s, at }) =>
+      isWet(s.world.weather) ? 'the moss was soaking wet' : isDark(at) ? 'there were no clouds to see in the dark' : null,
+    outcome: ({ rng }) => ({
+      text: `lay in the moss watching the clouds; one looked like ${rng.pick(['a teapot', 'a sleeping badger', 'a train', 'a boot', 'nothing at all'])}`,
+    }),
+  },
+
+  // The halt
+  {
+    id: 'train',
+    place: 'halt',
+    label: 'wait for the train and watch it go by',
+    doing: 'waiting for the train',
+    gist: 'the train going by',
+    topic: 'trains',
+    effort: 'rest',
+    minutes: [0, 0],
+    effects: { calm: 2 },
+    expect: () => ({ novelty: 24, company: 3 }),
+    duration: ({ at }) => nextTrain(at) - at + 3,
+    blocked: ({ at }) => (nextTrain(at) - at <= 30 ? null : 'there was no train due for ages'),
+    note: ({ at }) => `next train at ${clock(nextTrain(at))}`,
+    outcome: ({ s, rng }, act) => {
+      const when = clock(nextTrain(act.startedAt));
+      const base = `watched the ${when} train rattle through the halt towards the city`;
+      if (rng.chance(0.12)) {
+        s.world.travellerUntil = s.t + 150;
+        const sq = (s.world.present.square ??= []);
+        if (!sq.includes('traveller')) sq.push('traveller');
+        return {
+          text: `${base}; a traveller with a huge rucksack got off and wandered towards the square`,
+          extra: { novelty: 28, company: 3 },
+          thought: { key: 'stranger', text: 'A stranger got off the train', value: 3, hours: 5 },
+        };
+      }
+      if (rng.chance(0.3)) {
+        return {
+          text: `${base}; someone waved from a window`,
+          extra: { novelty: 24, company: 8 },
+          thought: { key: 'train-wave', text: 'Someone waved at me from the train', value: 4, hours: 8 },
+        };
+      }
+      return {
+        text: base,
+        extra: { novelty: 24, company: 3 },
+        thought: { key: 'train', text: 'Watched the train go off to the city', value: 2, hours: 4 },
+      };
+    },
+  },
+  {
+    id: 'timetable',
+    place: 'halt',
+    label: 'read the timetable and imagine the city',
+    doing: 'reading the timetable',
+    gist: 'the timetable',
+    topic: 'trains',
+    effort: 'rest',
+    minutes: [10, 20],
+    effects: { novelty: 9, making: 3 },
+    outcome: ({ rng }) => ({
+      text: rng.pick([
+        'read the timetable at the halt again: four trains a day to the city',
+        'traced the line on the little map at the halt, all the way to the city at the end',
+        'read the timetable and counted the stops to the city: seven',
+      ]),
+    }),
+  },
+
+  // Anywhere
+  {
+    id: 'idle',
+    place: 'here',
+    label: 'sit for a bit',
+    doing: 'sitting for a bit',
+    gist: 'sitting',
+    topic: 'rest',
+    effort: 'rest',
+    minutes: [5, 12],
+    effects: { rest: 3, calm: 2 },
+    diary: false,
+    outcome: () => ({ text: 'sat for a bit' }),
+  },
+];
+
+export const ACTION_BY_ID: Record<string, ActionDef> = Object.fromEntries(ACTIONS.map((a) => [a.id, a]));
+export const ACTION_IDS = ACTIONS.map((a) => a.id);
+
+export function actionDef(id: string): ActionDef {
+  const def = ACTION_BY_ID[id];
+  if (!def) throw new Error(`unknown action ${id}`);
+  return def;
+}
