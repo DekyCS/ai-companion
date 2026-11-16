@@ -120,8 +120,12 @@ const capital = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 const lower = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
 const placeShort = (p: string) => PLACES[p as PlaceId]?.short ?? p;
 
+/** Khina minutes per real minute, from the latest snapshot (24 when Khina lives a day an hour). */
+let pace = 1;
+
+/** How long ago, in real time: Khina's clock runs faster than the visitor's. */
 function ago(now: number, then: number): string {
-  const m = Math.max(0, Math.round(now - then));
+  const m = Math.max(0, Math.round((now - then) / pace));
   if (m < 2) return 'just now';
   if (m < 60) return `${m} min ago`;
   if (m < 1440) return `${Math.round(m / 60)} h ago`;
@@ -716,7 +720,8 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
       n.root.classList.toggle('low', v < 25);
     }
     const d = describe(s.activity);
-    $('nowWhen').textContent = `day ${s.day} · ${s.clock}`;
+    pace = Math.max(0.01, (s.speed || 1 / 60) * 60);
+    $('nowWhen').textContent = `Khina's day ${s.day} · ${s.clock}`;
     const doing = $('doing');
     doing.textContent = d.title;
     if (d.chip) {
@@ -735,7 +740,8 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     if (lr) lastRead.replaceChildren(el('span', 'k', 'last looked up'), el('b', '', lr.question), ` · ${ago(s.t, lr.t)}`);
     $('brain').textContent = `Brain: ${s.brain} · ${paceText(s.speed)}`;
     $('clockIcon').innerHTML = s.dark ? ICONS.moon! : ICONS.sun!;
-    $('clockText').textContent = `${s.weekday.slice(0, 3)} ${s.clock} · ${WEATHER_WORD[s.weather] ?? s.weather}`;
+    $('clockText').textContent = `Khina's time: ${s.weekday.slice(0, 3)} ${s.clock} · ${WEATHER_WORD[s.weather] ?? s.weather}`;
+    $('clockPill').title = Math.abs(pace - 1) < 0.05 ? 'Khina lives on real time' : `Khina's clock runs ${Math.round(pace)}× faster than yours: ${paceText(s.speed)}`;
     const st = $('statusText');
     st.replaceChildren(el('b', '', 'Khina'), ` is ${d.status}`);
     renderFeed(s);
