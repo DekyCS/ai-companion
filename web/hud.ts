@@ -740,7 +740,7 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     if (lr) lastRead.replaceChildren(el('span', 'k', 'last looked up'), el('b', '', lr.question), ` · ${ago(s.t, lr.t)}`);
     $('brain').textContent = `Brain: ${s.brain} · ${paceText(s.speed)}`;
     $('clockIcon').innerHTML = s.dark ? ICONS.moon! : ICONS.sun!;
-    $('clockText').textContent = `Khina's time: ${s.weekday.slice(0, 3)} ${s.clock} · ${WEATHER_WORD[s.weather] ?? s.weather}`;
+    $('clockText').replaceChildren(el('small', '', "Khina's time"), el('span', '', `${s.weekday.slice(0, 3)} ${s.clock} · ${WEATHER_WORD[s.weather] ?? s.weather}`));
     $('clockPill').title = Math.abs(pace - 1) < 0.05 ? 'Khina lives on real time' : `Khina's clock runs ${Math.round(pace)}× faster than yours: ${paceText(s.speed)}`;
     const st = $('statusText');
     st.replaceChildren(el('b', '', 'Khina'), ` is ${d.status}`);
