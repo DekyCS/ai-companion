@@ -245,10 +245,19 @@ export function diaryPrompt(s: State, rec: Completed, recentLines: string[], sen
   return lines.join('\n');
 }
 
+/** Added to an outcome when an overdone action gave less than it used to (the model reads it). */
+export const STALE_NOTE = '; it did less for Khina than it used to';
+const STALE_SAY = ['Not as much fun as it used to be.', "I've done that a lot lately.", 'Nice enough, but I could do with something new.', 'Same as last time, really.'];
+
 /** Diary line written by code when the model is off. */
 export function templateDiary(rec: Completed): string {
+  const stale = rec.outcome.includes(STALE_NOTE);
   const firstPerson = rec.outcome
+    .replace(STALE_NOTE, '')
     .replace(/\bKhina (?=[a-z]+ed\b|ate\b|took\b|was\b|got\b|went\b|had\b|stood\b|sat\b)/g, 'I ')
     .replace(/\bKhina\b/g, 'me');
-  return sentence(firstPerson);
+  const line = sentence(firstPerson);
+  // Going stale is said now and then, in different words, not tacked onto every line.
+  const k = Math.floor(rec.start);
+  return stale && k % 3 === 0 ? `${line} ${STALE_SAY[Math.floor(k / 3) % STALE_SAY.length]}` : line;
 }

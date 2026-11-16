@@ -10,7 +10,7 @@ import { remember } from './mind/memory.ts';
 import { nightly } from './mind/sleep.ts';
 import { maybeDrama } from './world/drama.ts';
 import { decide, SENSES, type Decision, type Mind } from './mind/decide.ts';
-import { templateDiary } from './mind/prompts.ts';
+import { STALE_NOTE, templateDiary } from './mind/prompts.ts';
 import type { Rng } from './rng.ts';
 import { HISTORY_KEEP, type Activity, type Completed, type FoodId, type State } from './state.ts';
 import { clock, dayOf, hourOf, minuteOfDay, stamp } from './time.ts';
@@ -256,7 +256,7 @@ export class Sim {
     const curiosity = unfamiliarNovelty(s, def, a.place);
     if (curiosity) applyEffects(s, { novelty: curiosity });
     if (stale < habit.feltBelow && !ROUTINE.has(def.id)) {
-      out.text += '; it did less for Khina than it used to';
+      out.text += STALE_NOTE;
       if (!out.thought) out.thought = { key: 'stale', text: `${capital(def.gist)} did less for me than it used to`, value: -1, hours: 3 };
     }
     recordUse(s, def, a.place);
