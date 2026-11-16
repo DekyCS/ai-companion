@@ -29,9 +29,10 @@ Where everything stands is in `src/world/layout.ts`, shared by Blender and the b
 
 ## Always on (Railway)
 
-Live at https://khina-production.up.railway.app: Claude is the brain, on the real clock (`TZ`, so
-Khina's night is your night), about $0.023 a day, capped by `KHINA_DAILY_CAP_USD` (default $1).
-The `Dockerfile` runs `src/live.ts --model --clock real --persist data/khina-state.json`; a volume at
+Live at https://khina-production.up.railway.app: Claude is the brain, and Khina lives a day every
+real hour (`--rate 24`; `--rate 1` would put Khina on your wall clock, set by `TZ`). About $0.023 a
+Khina day, so about $0.55 a real day, capped by `KHINA_DAILY_CAP_USD` (default $1).
+The `Dockerfile` runs `src/live.ts --model --clock real --rate 24 --persist data/khina-state.json`; a volume at
 `/app/data` keeps Khina's life and the spend ledger across redeploys, and after downtime the sim
 catches up on the hours missed. Redeploy with `railway up --detach`; logs with `railway logs`.
 

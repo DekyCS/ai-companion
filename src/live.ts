@@ -4,8 +4,9 @@
 // --speed is game minutes per real second: 1 = a day in 24 minutes, 60 = an hour a second,
 // 0.0167 = real time. The brain is code only unless --model is given (Claude costs money,
 // about $0.023 a game day, under the usual daily cap).
-// --clock real runs at real time with Khina's clock on the local wall clock (set TZ), so night
-// is night. --persist saves Khina's life every few minutes and on shutdown, and picks it up on
+// --clock real paces Khina's clock by the real one: --rate 1 (default) is real time on the
+// local wall clock (set TZ), so night is night; --rate 24 lives a Khina day every real hour.
+// Khina still sleeps at Khina's night either way. --persist saves Khina's life every few minutes and on shutdown, and picks it up on
 // start, catching up on the time missed. Hosting (Railway) sets PORT; then it listens on all
 // interfaces. See Dockerfile.
 
@@ -35,13 +36,16 @@ const { values } = parseArgs({
     'max-spend': { type: 'string', default: String(budget.runUsd) },
     quiet: { type: 'boolean', default: false },
     clock: { type: 'string', default: 'game' },
+    rate: { type: 'string', default: '1' },
     persist: { type: 'string' },
   },
 });
 
 const seed = Number(values.seed) || 1;
 const realClock = values.clock === 'real';
-const speed = realClock ? 1 / 60 : Math.min(600, Math.max(0.001, Number(values.speed) || 1));
+/** With --clock real: Khina minutes per real minute (1 = real time). */
+const rate = Math.min(1440, Math.max(0.1, Number(values.rate) || 1));
+const speed = realClock ? rate / 60 : Math.min(600, Math.max(0.001, Number(values.speed) || 1));
 const port = Number(process.env.PORT) || Number(values.port) || 5174;
 const host = process.env.PORT ? '0.0.0.0' : '127.0.0.1';
 const persistPath = values.persist ?? null;
@@ -60,6 +64,8 @@ interface Saved {
   seed: number;
   /** Real time (ms) at game minute 0, when the clock follows the wall clock. */
   epochMs: number | null;
+  /** Khina minutes per real minute when epochMs was set. */
+  rate?: number;
   s: State;
   rngState: number;
   log: Completed[];
@@ -84,8 +90,11 @@ if (!saved && realClock) {
 }
 const rng = new Rng(seed);
 if (saved) rng.state = saved.rngState;
-let epochMs = saved?.epochMs ?? (realClock ? Date.now() - s.t * 60_000 : null);
-if (realClock && epochMs === null) epochMs = Date.now() - s.t * 60_000;
+// Khina minute t happens at real time epochMs + t / rate minutes. A save made at another rate
+// is re-anchored at the current minute (no catching up across a change of pace).
+const anchorNow = () => Date.now() - (s.t * 60_000) / rate;
+let epochMs: number | null = null;
+if (realClock) epochMs = saved?.epochMs != null && (saved.rate ?? 1) === rate ? saved.epochMs : anchorNow();
 
 const clients = new Set<ServerResponse>();
 const sim = new Sim(s, {
@@ -103,7 +112,7 @@ if (saved) sim.log.push(...saved.log);
 
 function save(): void {
   if (!persistPath) return;
-  const data: Saved = { version: 1, seed, epochMs, s: { ...s, rngState: rng.state }, rngState: rng.state, log: sim.log.slice(-80) };
+  const data: Saved = { version: 1, seed, epochMs, rate, s: { ...s, rngState: rng.state }, rngState: rng.state, log: sim.log.slice(-80) };
   mkdirSync(dirname(persistPath), { recursive: true });
   const tmp = `${persistPath}.tmp`;
   writeFileSync(tmp, JSON.stringify(data));
@@ -235,7 +244,7 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(port, host, () => {
-  const pace = realClock ? 'real time, on the wall clock' : `${speed} game minute${speed === 1 ? '' : 's'} per second`;
+  const pace = realClock ? (rate === 1 ? 'real time, on the wall clock' : `${rate}× real time (a Khina day every ${+(24 / rate).toFixed(2)} h)`) : `${speed} game minute${speed === 1 ? '' : 's'} per second`;
   console.log(`Khina · seed ${seed} · brain: ${mind.kind === 'model' ? 'Claude' : 'code only'} · ${pace}${saved ? ' · picked up from the last save' : ''}`);
   console.log(`Open http://${host === '0.0.0.0' ? 'localhost' : host}:${port}  (events: ${outDir}/events.jsonl)\n`);
 });
@@ -243,17 +252,17 @@ server.listen(port, host, () => {
 if (realClock && epochMs !== null) {
   // Catch up on time missed while the server was down (at most two days; after a longer gap,
   // whole days are skipped so the time of day still matches), then keep pace with the clock.
-  const behind = (Date.now() - epochMs) / 60_000 - s.t;
-  if (behind > 2 * 1440) epochMs += Math.floor((behind - 2 * 1440) / 1440) * 1440 * 60_000;
+  const behind = ((Date.now() - epochMs) * rate) / 60_000 - s.t;
+  if (behind > 2 * 1440) epochMs += (Math.floor((behind - 2 * 1440) / 1440) * 1440 * 60_000) / rate;
   let n = 0;
   for (;;) {
-    const due = (Date.now() - epochMs) / 60_000;
+    const due = ((Date.now() - epochMs) * rate) / 60_000;
     if (s.t <= due) {
       await sim.tick();
       // Let the web server breathe while catching up.
       if (++n % 50 === 0) await new Promise((r) => setImmediate(r));
     } else {
-      await new Promise((r) => setTimeout(r, Math.min(60_000, (s.t - due) * 60_000 + 5)));
+      await new Promise((r) => setTimeout(r, Math.min(60_000, ((s.t - due) * 60_000) / rate + 5)));
     }
   }
 } else {
