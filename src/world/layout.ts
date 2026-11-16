@@ -20,6 +20,8 @@ export const APPROACH: Partial<Record<PlaceId, XY>> = {
   bakery: [33, 3.4],
   square: [30.5, -2],
   patch: [18, 7.4],
+  // In front of the internet hut's porch (the hut is at [18, -9], its front faces south).
+  nethut: [18, -12.6],
 };
 
 /** Bends in the paths that are not places. */
@@ -28,6 +30,8 @@ export const JUNCTIONS: Record<string, XY> = {
   fork: [-4.5, 12],
   // West of the oak, so the way to the woods goes round the trunk and its roots, not through them.
   oakwest: [-4.4, -0.6],
+  // On the lane down to the stream, where the little path to the internet hut turns off.
+  netlane: [12.27, -12.6],
 };
 
 /** Dirt paths between places and junctions. Khina walks along these. */
@@ -36,7 +40,9 @@ export const PATHS: [string, string][] = [
   ['burrow', 'lane'],
   ['shed', 'lane'],
   ['lane', 'patch'],
-  ['lane', 'stream'],
+  ['lane', 'netlane'],
+  ['netlane', 'stream'],
+  ['netlane', 'nethut'],
   ['lane', 'square'],
   ['square', 'bakery'],
   ['patch', 'bakery'],
@@ -91,6 +97,9 @@ export const SPOTS: Record<string, Spot> = {
   moss: { at: [-9.6, 29.4], face: [-9, 31], pose: 'curl' },
   train: { at: [44.4, -9], z: 0.45, face: [47, -9], pose: 'sit' },
   timetable: { at: [44.4, -5.6], z: 0.45, face: [45.4, -5.6], pose: 'stand' },
+  // The internet hut: Khina sits on a cushion at the old computer on the porch.
+  browse: { at: [18.01, -11.43], z: 0.07, face: [17.31, -11.0], pose: 'sit' },
+  nethut_idle: { at: [18.95, -11.05], face: [18.95, -13], pose: 'stand' },
 };
 
 /** Chimney tops, where the browser puffs smoke when a fire is lit. */

@@ -10,9 +10,11 @@ import { remember } from './mind/memory.ts';
 import { nightly } from './mind/sleep.ts';
 import { maybeDrama } from './world/drama.ts';
 import { decide, SENSES, type Decision, type Mind } from './mind/decide.ts';
-import { STALE_NOTE, templateDiary } from './mind/prompts.ts';
-import type { Rng } from './rng.ts';
-import { HISTORY_KEEP, type Activity, type Completed, type FoodId, type State } from './state.ts';
+import { onMind, STALE_NOTE, templateDiary } from './mind/prompts.ts';
+import { formFor, pieceRequest } from './mind/making.ts';
+import type { PieceStore } from './pieces.ts';
+import { Rng as Seeded, type Rng } from './rng.ts';
+import { HISTORY_KEEP, type Activity, type Completed, type FoodId, type State, type WorkResult } from './state.ts';
 import { clock, dayOf, hourOf, minuteOfDay, stamp } from './time.ts';
 import { actionDef, type ActionDef, type Ctx } from './world/actions.ts';
 import { PLACES, travelMinutes } from './world/places.ts';
@@ -52,7 +54,16 @@ export interface SimOptions {
   onLine?: (line: string) => void;
   /** Every event as it happens (the live server forwards these to the browser). */
   onEvent?: (e: Record<string, unknown>) => void;
+  /**
+   * Live server only: where real pieces are kept. With it, Khina may make real things, have ideas
+   * of its own and use the internet hut (when the model is on and the budget lasts). Without it the
+   * village life is exactly the fixed one, so experiments measure what they always measured.
+   */
+  pieces?: PieceStore;
 }
+
+/** How long the sim waits, at most, for real work to come back when an action ends. */
+const WORK_WAIT_MS = 150_000;
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -69,6 +80,11 @@ export class Sim {
   private readonly onLine: (line: string) => void;
   private readonly onEvent: ((e: Record<string, unknown>) => void) | null;
   private decisionCount = 0;
+  private readonly pieces: PieceStore | null;
+  /** Real work running for an activity, by decision id. */
+  private readonly jobs = new Map<number, Promise<WorkResult>>();
+  /** Random numbers for real work, kept off the seeded stream. */
+  private readonly workRng = new Seeded(Date.now() % 2147483647);
 
   constructor(s: State, o: SimOptions) {
     this.s = s;
@@ -78,6 +94,9 @@ export class Sim {
     this.speedMs = o.speedMs ?? 0;
     this.onLine = o.onLine ?? (() => {});
     this.onEvent = o.onEvent ?? null;
+    this.pieces = o.pieces ?? null;
+    s.pieces ??= [];
+    s.readings ??= [];
     if (this.outDir) mkdirSync(this.outDir, { recursive: true });
     updatePresence(s.world, s.t, this.rng);
   }
@@ -186,11 +205,15 @@ export class Sim {
 
   private async startNext(): Promise<void> {
     const s = this.s;
+    if (this.pieces) {
+      const modelUp = this.mind.kind === 'model' && this.mind.unavailable() === null;
+      s.world.can = { make: true, own: modelUp, net: modelUp && !!this.mind.canWork?.() };
+    }
     const d = await decide(s, this.rng, this.mind, ++this.decisionCount);
     this.decisions.push(d);
     this.event({ type: 'decision', ...d });
     const def = actionDef(d.actionId);
-    const place = def.place === 'here' ? s.place : def.place;
+    const place = d.place ?? (def.place === 'here' ? s.place : def.place);
     const base: Activity = {
       kind: 'walk', actionId: def.id, detail: d.detail, reason: d.reason, origin: d.origin, place,
       startedAt: s.t, endsAt: null, duration: 0, moodBefore: s.mood, decisionId: d.id,
@@ -220,6 +243,7 @@ export class Sim {
     };
     def.begin?.(c, act);
     s.activity = act;
+    this.startWork(def, act);
     this.event({ type: 'start', id: def.id, place: act.place, endsAt: act.endsAt, wakeAfter: act.wakeAfter });
   }
 
@@ -246,8 +270,55 @@ export class Sim {
     );
   }
 
+  /** Starts the real work behind an action (a piece, a search), if there is any to do. */
+  private startWork(def: ActionDef, act: Activity): void {
+    const m = this.mind;
+    const store = this.pieces;
+    if (!def.work || !store || !m.canWork?.()) return;
+    const s = this.s;
+    const mindLine = onMind(s, 1, false)[0] ?? '';
+    let job: Promise<WorkResult> | null = null;
+    if (def.work === 'piece' && m.makePiece) {
+      const draw = def.id === 'draw';
+      const form = draw ? 'picture' : formFor(act.detail, this.workRng);
+      const req = pieceRequest(s, form, act.detail, draw ? 'charcoal on a strip of bark' : '', this.workRng, mindLine);
+      job = m.makePiece(s, req).then((d) => (typeof d === 'string' ? { kind: 'none', why: d } : { kind: 'piece', piece: store.save(d, s.t) }));
+    }
+    if (def.work === 'web' && m.browse) {
+      job = m.browse(s, act.detail, mindLine).then((r) => (typeof r === 'string' ? { kind: 'none', why: r } : { kind: 'web', reading: r }));
+    }
+    if (job) this.jobs.set(act.decisionId, job.catch((err: unknown) => ({ kind: 'none', why: String(err).slice(0, 120) })));
+  }
+
+  private async collectWork(a: Activity): Promise<void> {
+    const job = this.jobs.get(a.decisionId);
+    if (!job) return;
+    this.jobs.delete(a.decisionId);
+    let timer: NodeJS.Timeout | undefined;
+    const late = new Promise<WorkResult>((r) => (timer = setTimeout(() => r({ kind: 'none', why: 'took too long' }), WORK_WAIT_MS)));
+    a.result = await Promise.race([job, late]);
+    clearTimeout(timer);
+    const s = this.s;
+    const r = a.result;
+    if (r.kind === 'piece') {
+      s.pieces.push(r.piece);
+      if (s.pieces.length > 200) s.pieces.splice(0, s.pieces.length - 200);
+      this.event({ type: 'piece', piece: r.piece });
+      this.onLine(`${' '.repeat(10)}✎ made ${r.piece.form === 'toy' ? 'a little game' : `a ${r.piece.form}`}: "${r.piece.title}"`);
+    } else if (r.kind === 'web') {
+      s.readings.push(r.reading);
+      if (s.readings.length > 60) s.readings.splice(0, s.readings.length - 60);
+      this.event({ type: 'reading', reading: r.reading });
+      this.onLine(`${' '.repeat(10)}⌕ looked up "${r.reading.question}": ${r.reading.learned}`);
+    } else {
+      this.event({ type: 'work-failed', why: r.why });
+      this.onLine(`${' '.repeat(10)}✗ real work failed: ${r.why}`);
+    }
+  }
+
   private async complete(def: ActionDef, a: Activity): Promise<void> {
     const s = this.s;
+    await this.collectWork(a);
     const out = def.outcome?.(this.ctx(), a) ?? { text: def.doing };
     const stale = a.stale ?? 1;
     const newness = noveltyFactor(def, stale);

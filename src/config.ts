@@ -211,10 +211,14 @@ export const models = {
   decide: 'claude-haiku-5-5',
   diary: 'claude-haiku-5-5',
   make: 'claude-sonnet-5-5',
+  web: 'claude-sonnet-5-5',
   sleep: 'claude-opus-5-5',
 } as const;
 
-export const effort = { decide: 'low', diary: 'low', sleep: 'medium' } as const;
+export const effort = { decide: 'low', diary: 'low', make: 'medium', web: 'low', sleep: 'medium' } as const;
+
+/** US dollars per web search (server-side search tool). Check the current price. */
+export const webSearchUsd = 0.01;
 
 /** US dollars per million tokens. Check current prices before trusting cost figures. */
 export const prices: Record<string, { input: number; output: number }> = {
@@ -230,6 +234,11 @@ export const budget = {
   dailyUsd: Number(process.env.KHINA_DAILY_CAP_USD ?? 1) || 1,
   /** Default most a single simulator run may spend. */
   runUsd: 0.5,
+  /**
+   * Of the daily cap, the most that real pieces and the internet may take per real day. When it is
+   * used up, Khina's making turns back into words only and the internet hut's computer stays off.
+   */
+  extrasUsd: Number(process.env.KHINA_EXTRAS_CAP_USD ?? 0.3) || 0.3,
 };
 
 /** Where the real-money spend ledger lives (shared by all runs). */

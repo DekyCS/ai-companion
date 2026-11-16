@@ -41,7 +41,38 @@ export interface Activity {
   needBefore?: number;
   moodBefore: number;
   decisionId: number;
+  /** What the real work behind the action came to (a piece made, a page read online), when there was any. */
+  result?: WorkResult;
 }
+
+/** The kinds of real piece Khina can make. */
+export type PieceForm = 'picture' | 'poem' | 'story' | 'song' | 'toy';
+export const PIECE_FORMS: PieceForm[] = ['picture', 'poem', 'story', 'song', 'toy'];
+
+/** A real piece Khina made, stored outside the state (see src/pieces.ts). */
+export interface PieceRef {
+  id: string;
+  form: PieceForm;
+  title: string;
+  /** Game minute it was finished. */
+  t: number;
+  /** What Khina set out to make, in Khina's words. */
+  about: string;
+}
+
+/** Something Khina looked up at the internet hut, and what came of it. */
+export interface Reading {
+  t: number;
+  question: string;
+  /** What Khina took from it, in plain words. */
+  learned: string;
+  sources: { title: string; url: string }[];
+}
+
+export type WorkResult =
+  | { kind: 'piece'; piece: PieceRef }
+  | { kind: 'web'; reading: Reading }
+  | { kind: 'none'; why: string };
 
 /** One finished (or refused) action, as the village's records saw it. */
 export interface Completed {
@@ -151,6 +182,10 @@ export interface State {
   pantry: Record<FoodId, number>;
   finds: { name: string; t: number }[];
   made: { what: string; t: number }[];
+  /** Real pieces made (live server only). */
+  pieces: PieceRef[];
+  /** Things looked up at the internet hut (live server only). */
+  readings: Reading[];
   world: WorldState;
   personality: Personality;
   rngState: number;
@@ -208,6 +243,8 @@ export function newState(seed: number, features: Features = ALL_ON): State {
     pantry: { berries: 2, beetles: 3, crusts: 0, peas: 0 },
     finds: [],
     made: [],
+    pieces: [],
+    readings: [],
     world: newWorld(),
     personality,
     rngState: seed,

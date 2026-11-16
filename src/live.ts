@@ -21,7 +21,9 @@ import { budget } from './config.ts';
 import { makeMind } from './minds.ts';
 import { Rng } from './rng.ts';
 import { Sim } from './sim.ts';
-import { newState, type Completed, type State } from './state.ts';
+import { PieceStore } from './pieces.ts';
+import { TOY_CSP } from './mind/making.ts';
+import { newState, type Completed, type PieceRef, type Reading, type State } from './state.ts';
 import { clock, dayOf, isDark, partOfDay, weekday } from './time.ts';
 import { actionDef } from './world/actions.ts';
 import { PLACES } from './world/places.ts';
@@ -96,18 +98,28 @@ const anchorNow = () => Date.now() - (s.t * 60_000) / rate;
 let epochMs: number | null = null;
 if (realClock) epochMs = saved?.epochMs != null && (saved.rate ?? 1) === rate ? saved.epochMs : anchorNow();
 
+// Real pieces Khina makes live next to the save (on the server's volume), or in the run folder.
+const store = new PieceStore(persistPath ? join(dirname(persistPath), 'pieces') : join(outDir, 'pieces'));
+
 const clients = new Set<ServerResponse>();
 const sim = new Sim(s, {
   mind,
   rng,
   outDir,
   speedMs: 1000 / speed,
+  pieces: store,
   onLine: values.quiet ? undefined : (line) => console.log(line),
   onEvent: (e) => {
     if (e.type === 'tick') return;
+    if (e.type === 'piece') broadcast('piece', { piece: withClock(e.piece as PieceRef) });
+    if (e.type === 'reading') broadcast('reading', { reading: withClock(e.reading as Reading) });
     broadcast('snap', { snap: snapshot(), event: brief(e) });
   },
 });
+
+function withClock<T extends { t: number }>(x: T): T & { clock: string } {
+  return { ...x, clock: `${weekday(x.t).slice(0, 3)} ${clock(x.t)}` };
+}
 if (saved) sim.log.push(...saved.log);
 
 function save(): void {
@@ -164,8 +176,12 @@ function snapshot() {
     letters: s.world.letters.length,
     diary: sim.log
       .filter((r) => r.diary)
-      .slice(-8)
-      .map((r) => ({ t: r.end, clock: clock(r.end), text: r.diary, place: PLACES[r.place].short })),
+      .slice(-40)
+      .map((r) => ({ t: r.end, clock: clock(r.end), day: dayOf(r.end), text: r.diary, place: PLACES[r.place].short, actionId: r.actionId })),
+    pieces: (s.pieces ?? []).slice(-12).map(withClock),
+    readings: (s.readings ?? []).slice(-8).map(withClock),
+    pages: s.pages.slice(-5).map((p) => ({ day: p.day, text: p.text })),
+    moodArc: sim.hours.slice(-48).map((h) => ({ t: h.t, mood: h.mood })),
   };
 }
 
@@ -218,6 +234,31 @@ const server = createServer(async (req, res) => {
   if (url === '/state') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify(snapshot()));
+    return;
+  }
+  if (url === '/pieces') {
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
+    res.end(JSON.stringify({ pieces: store.list().reverse().map(withClock) }));
+    return;
+  }
+  if (url.startsWith('/pieces/')) {
+    const f = store.file(url.slice('/pieces/'.length).split('?')[0] ?? '');
+    if (!f) {
+      res.writeHead(404).end('Not found');
+      return;
+    }
+    const safe = { 'x-content-type-options': 'nosniff', 'cache-control': 'public, max-age=86400' };
+    if (f.type === 'json') {
+      const body = withClock(JSON.parse(await readFile(f.path, 'utf8')) as PieceRef);
+      res.writeHead(200, { ...safe, 'content-type': 'application/json' }).end(JSON.stringify(body));
+    } else if (f.type === 'svg') {
+      res.writeHead(200, { ...safe, 'content-type': 'image/svg+xml', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'" });
+      createReadStream(f.path).pipe(res);
+    } else {
+      // Little games run in an opaque, sandboxed origin with no network, even when opened directly.
+      res.writeHead(200, { ...safe, 'content-type': 'text/html; charset=utf-8', 'content-security-policy': `${TOY_CSP}; sandbox allow-scripts` });
+      createReadStream(f.path).pipe(res);
+    }
     return;
   }
   const file = resolvePath(url);

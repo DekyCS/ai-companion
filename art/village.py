@@ -13,6 +13,7 @@
 #   WaterM, GlowM
 # Objects the browser changes at runtime are kept separate and named:
 #   Glow.burrow, Glow.bakery, Glow.lamp (windows and the lamp, lit at night or when someone is in)
+#   Screen.nethut (the internet hut's computer screen; its own always-on glowing material, ScreenM)
 #   Flag.letterbox (origin at its pivot; raised when there is post), Water, Ground, Foliage.
 # Coordinates: metres, x east, y north, z up. Fronts face south (-y), toward the default camera.
 
@@ -369,6 +370,8 @@ WOODS = PLACES["woods"]
 OAK = Vector((0.0, 2.8))
 SHED = Vector((6.6, 6.9))
 BAKERY = Vector((33.0, 7.6))
+NETHUT = Vector((18.0, -9.0))  # the internet hut; its porch faces south onto the path to the lane
+NETHUT_KEEP = (15.4, 20.6, -13.4, -6.9)  # x0, x1, y0, y1: no decor or grass here
 PLATFORM = (43.2, 46.0, -15.5, -2.5, 0.45)  # x0, x1, y0, y1, top
 
 # ---------- trees ----------
@@ -1089,6 +1092,163 @@ def build_shed(b, foliage):
     circle(x0 + W + 0.45, y0 + 0.5, 0.42, "barrel")
 
 
+def build_nethut(b, foliage, screen):
+    """The internet hut: a small painted timber hut with a deep front porch. On the porch, at the
+    west end, a low table with a chunky old beige computer whose screen glows; a cushion for Khina
+    in front of it; a wifi sign hanging from the eave and an aerial on a mast by the west post."""
+    hx, hy = NETHUT
+    W, D, H = 3.0, 2.4, 2.0
+    x0, x1 = hx - W / 2, hx + W / 2
+    y0, y1 = hy - D / 2, hy + D / 2  # y0 is the front wall
+    PORCH = 1.6
+    py0 = y0 - PORCH  # front edge of the porch
+    wall = lin("7fa8b8")
+    trim = "efe6d2"
+    b.box((x0 + 0.04, y0 + 0.04, 0), (W - 0.08, D - 0.08, H), col("6d93a3"))
+    # Painted boards all round.
+    for face in ("front", "back", "left", "right"):
+        if face in ("front", "back"):
+            n = 9
+            for k in range(n):
+                bw = W / n
+                y = y0 - 0.02 if face == "front" else y1 - 0.03
+                b.box((x0 + k * bw + 0.005, y, 0.0), (bw - 0.012, 0.05, H), rgba(wall * RNG.uniform(0.9, 1.08)), bevel=0.01, segs=1)
+        else:
+            n = 7
+            for k in range(n):
+                bw = D / n
+                x = x0 - 0.02 if face == "left" else x1 - 0.03
+                b.box((x, y0 + k * bw + 0.005, 0.0), (0.05, bw - 0.012, H), rgba(wall * RNG.uniform(0.9, 1.08)), bevel=0.01, segs=1)
+    for px in (x0 - 0.05, x1 - 0.07):
+        for py in (y0 - 0.05, y1 - 0.07):
+            b.box((px, py, 0), (0.12, 0.12, H + 0.05), col(trim), bevel=0.02)
+    # One roof over the hut and the porch, held up at the front by two posts.
+    tiled_roof(b, hx, (y1 + py0) / 2, H, W, y1 - py0, 1.15, 0.32, "c99a3e", col("8fb2c0"), tw=0.36, row=0.26, slab=0.08)
+    posts = [(x0 + 0.12, py0 + 0.12), (x1 - 0.12, py0 + 0.12)]
+    for px, py in posts:
+        b.box((px, py, 0), (0.13, 0.13, H + 0.02), col(trim), centered=True, bevel=0.025)
+        b.box((px, py, 0), (0.2, 0.2, 0.08), col("b9ad97"), centered=True, bevel=0.02)
+        circle(px, py, 0.13, "porch post")
+    b.box((x0 + 0.05, py0 + 0.06, H - 0.16), (W - 0.1, 0.1, 0.14), col(trim), bevel=0.02)  # front beam
+    # Porch floor: low planks (kept under 4 cm so nobody sinks in or trips).
+    plank = lin("b48d62")
+    n = 11
+    for k in range(n):
+        pw = W / n
+        b.box((x0 + k * pw + 0.006, py0, 0.0), (pw - 0.014, PORCH + 0.02, 0.035), rgba(plank * RNG.uniform(0.86, 1.1)), bevel=0.008, segs=1)
+    # A coral door at the east end of the front wall, with a round window beside it.
+    dx = x1 - 0.62
+    door = lin("d9734e")
+    b.box((dx - 0.44, y0 - 0.1, 0), (0.88, 0.08, 1.72), col(trim), bevel=0.02)
+    for k in range(4):
+        b.box((dx - 0.39 + k * 0.195, y0 - 0.13, 0.03), (0.185, 0.05, 1.62), rgba(door * RNG.uniform(0.92, 1.08)), bevel=0.008, segs=1)
+    for z in (0.32, 1.32):
+        b.box((dx - 0.39, y0 - 0.17, z), (0.78, 0.05, 0.1), rgba(door * 0.82))
+    b.blob((dx - 0.28, y0 - 0.2, 0.88), 0.045, col("e7c35a"), sub=1, amp=0)
+    window(b, None, hx - 0.75, y0 - 0.02, 1.0, 0.62, 0.5, frame_hex="efe6d2", shutter_hex="d9734e", lit=False)
+    # Window box under it, with flowers.
+    b.box((hx - 0.75 - 0.42, y0 - 0.42, 0.62), (0.84, 0.3, 0.22), shade_fn("c99a3e", freq=4), bevel=0.02)
+    for k in range(5):
+        px = hx - 0.75 - 0.34 + k * 0.17 + RNG.uniform(-0.03, 0.03)
+        foliage.blob((px, y0 - 0.27, 0.9), 0.1, col("5f9d43", 0.12), sub=1, amp=0.2)
+        b.flower((px + RNG.uniform(-0.04, 0.04), y0 - 0.32, 0.98 + RNG.uniform(0, 0.06)), 0.06, RNG.choice(["f2a0b5", "fbf6ec", "f6d55e"]))
+    rect(hx, hy, W + 0.25, D + 0.25, 0, "internet hut")
+
+    # ----- the computer corner, at the west end of the porch -----
+    D0 = Vector((hx - 0.8, py0 + 0.95))  # table centre
+    f = Vector((0.6, -0.8)).normalized()  # the way the screen faces: toward the path, so it shows
+    nrm = Vector((-f.y, f.x))
+    rz = math.atan2(f.y, f.x)
+
+    def at(u, v, z=0.0):
+        p = D0 + f * u + nrm * v
+        return (p.x, p.y, z)
+
+    def box_uv(u, v, z, su, sv, sz, color, bevel=0.0, segs=2):
+        b.box(at(u, v, z), (su, sv, sz), color, rz=rz, centered=True, bevel=bevel, segs=segs)
+
+    wood = lin("a8794e")
+    TOP = 0.27
+    box_uv(0.07, 0, TOP - 0.05, 0.78, 1.0, 0.05, rgba(wood * 1.05), bevel=0.02)
+    for lu in (-0.27, 0.41):
+        for lv in (-0.43, 0.43):
+            box_uv(lu, lv, 0, 0.07, 0.07, TOP - 0.05, rgba(wood * 0.8), bevel=0.012, segs=1)
+    box_uv(0.07, 0, 0.07, 0.66, 0.9, 0.03, rgba(wood * 0.75), bevel=0.01, segs=1)  # shelf
+    for k, c in enumerate(("3f6fa8", "c4584a", "e2b84a")):  # floppy disks on the shelf
+        box_uv(0.2 - k * 0.02, 0.2 + k * 0.03, 0.1 + k * 0.014, 0.16, 0.16, 0.012, col(c))
+    rect(D0.x + f.x * 0.07, D0.y + f.y * 0.07, 0.82, 1.04, rz, "computer table")
+    beige = lin("e6dcc1")
+    # The monitor: a chunky rounded box with the tube's hump behind.
+    box_uv(-0.02, 0, TOP, 0.4, 0.46, 0.4, rgba(beige), bevel=0.045, segs=3)
+    box_uv(-0.25, 0, TOP + 0.06, 0.16, 0.32, 0.28, rgba(beige * 0.93), bevel=0.05, segs=2)
+    box_uv(-0.02, 0, TOP - 0.005, 0.3, 0.3, 0.02, rgba(beige * 0.85), bevel=0.01, segs=1)  # foot
+    # Dark rim, then the glowing glass.
+    box_uv(0.183, 0, TOP + 0.05, 0.012, 0.37, 0.3, col("3b3d3c"), bevel=0.01, segs=1)
+    screen.box(at(0.19, 0, TOP + 0.07), (0.01, 0.31, 0.25), col("ffffff"), rz=rz, centered=True, bevel=0.012, segs=1)
+    # Something on the screen: a title bar and a few lines of text, like a little web page.
+    ink = col("2f6a55")
+    box_uv(0.197, 0, TOP + 0.27, 0.004, 0.27, 0.03, ink)
+    for k, (w, off) in enumerate(((0.2, -0.03), (0.24, -0.01), (0.15, -0.05), (0.21, -0.02))):
+        box_uv(0.197, off, TOP + 0.22 - k * 0.04, 0.004, w, 0.012, ink)
+    box_uv(0.197, 0.08, TOP + 0.09, 0.004, 0.06, 0.05, col("e48aa0"))  # a tiny picture
+    b.blob(at(0.205, 0.19, TOP + 0.035), 0.012, col("7be07a"), sub=1, amp=0)  # power light
+    box_uv(0.08, -0.17, TOP + 0.37, 0.07, 0.07, 0.005, col("f3dc6b"))  # a sticky note on top
+    # Keyboard and a hedgehog-sized mouse.
+    box_uv(0.3, 0, TOP, 0.16, 0.42, 0.03, rgba(beige * 0.95), bevel=0.012, segs=1)
+    for row in range(3):
+        for k in range(7):
+            box_uv(0.25 + row * 0.042, -0.165 + k * 0.055, TOP + 0.028, 0.032, 0.044, 0.014, rgba(beige * RNG.uniform(0.78, 0.86)), bevel=0.004, segs=1)
+    mp = at(0.31, 0.33, TOP + 0.02)
+    b.blob(mp, 0.035, rgba(beige), scale=(1.35, 1.0, 0.6), sub=2, amp=0.02)
+    b.tube([mp, at(0.15, 0.32, TOP + 0.01), at(-0.05, 0.26, TOP + 0.01), at(-0.2, 0.12, TOP + 0.1)], 0.006, col("5a5652"), segs=5)
+    # A mug of something warm.
+    mug = at(0.12, -0.38, TOP)
+    b.lathe(mug, [(0, 0.045), (0.09, 0.05)], col("6f9fb4"), segs=12, cap_bottom=True, cap_color=col("5a3a26"))
+    # The cushion Khina sits on.
+    cu = Vector(SPOTS["browse"]["at"])
+    b.lathe((cu.x, cu.y, 0.0), [(0, 0.27), (0.03, 0.31), (0.06, 0.3), (0.075, 0.24), (0.08, 0.0)], col("c4584a"), segs=20, cap_top=False)
+    b.blob((cu.x, cu.y, 0.08), 0.025, col("e7c35a"), sub=1, amp=0)
+    # The aerial: a mast just west of the porch, clear of the roof, with a little TV aerial on top.
+    mx, my = x0 - 0.5, y0 - 0.35
+    circle(mx, my, 0.08, "aerial mast")
+    b.cyl((mx, my, 0.0), 4.0, 0.03, 0.025, col("8d9196"), segs=8)
+    for z in (0.9, 1.8):
+        b.box((mx + 0.06, my, z), (0.14, 0.05, 0.05), col("6a6e72"), centered=True)
+    top = Vector((mx, my, 4.0))
+    b.beam(top + Vector((-0.02, -0.5, 0)), top + Vector((-0.02, 0.5, 0)), 0.03, 0.03, col("8d9196"))
+    for k in range(4):
+        yy = -0.4 + k * 0.27
+        half = 0.32 - k * 0.05
+        b.beam(top + Vector((-half, yy, 0)), top + Vector((half, yy, 0)), 0.02, 0.02, col("a6aaae"))
+    b.blob(top + Vector((0, 0, 0.12)), 0.05, col("d9534a"), sub=1, amp=0)
+    # The wire: down the mast, across the porch floor along the front wall, up to the computer.
+    back = Vector(at(-0.33, 0, TOP + 0.12))
+    wire = [
+        (mx + 0.04, my, 3.6), (mx + 0.04, my, 0.3), (mx + 0.14, my - 0.02, 0.04),
+        (back.x - 0.3, back.y - 0.02, 0.04), (back.x - 0.06, back.y, 0.12), (back.x, back.y, back.z),
+    ]
+    b.tube(wire, 0.014, col("3c3a38"), segs=5)
+    # A hand-painted wifi sign hanging from the front beam, over the doorway end.
+    sx, sz = dx - 0.05, H - 0.62
+    sy = py0 + 0.04
+    for cx in (sx - 0.26, sx + 0.26):
+        b.beam((cx, sy + 0.02, H - 0.16), (cx, sy + 0.02, sz + 0.2), 0.015, 0.015, col("6a6e72"))
+    b.box((sx, sy, sz - 0.2), (0.7, 0.05, 0.42), col("efe4c8"), centered=True, bevel=0.03)
+    b.box((sx, sy + 0.012, sz - 0.23), (0.78, 0.04, 0.48), col("8a5f3c"), centered=True, bevel=0.02)
+    ink2 = col("33557f")
+    c0 = Vector((sx, sy - 0.035, sz - 0.11))
+    for r in (0.07, 0.13, 0.19):
+        pts = [c0 + Vector((math.cos(a) * r, 0, math.sin(a) * r)) for a in [math.radians(45 + 90 * t / 8) for t in range(9)]]
+        b.tube(pts, 0.017, ink2, segs=6)
+    b.blob(c0 + Vector((0, 0, 0.0)), 0.028, ink2, sub=1, amp=0)
+    # Greenery: a potted fern by the door and a flowering bush at the back corner.
+    pp = (x1 - 0.25, py0 + 0.35)
+    b.lathe((pp[0], pp[1], 0.03), [(0, 0.12), (0.22, 0.16), (0.24, 0.17)], col("c8714a"), segs=12, cap_bottom=True, cap_color=col("5a3a26"))
+    fern(b, pp[0], pp[1], 0.55, z=0.26)
+    bush(foliage, x1 + 0.6, y1 - 0.3, 0.75, flowers="f6d55e", deco=b)
+    bush(foliage, x0 - 0.55, y1 + 0.1, 0.65, flowers="f2a0b5", deco=b)
+
+
 def barrel(b, x, y, r, h, wood="8a5f3c"):
     prof = [(0, r * 0.86), (h * 0.25, r * 0.97), (h * 0.5, r), (h * 0.75, r * 0.97), (h, r * 0.86)]
     w = lin(wood)
@@ -1499,6 +1659,9 @@ def build_decor(b, foliage):
             continue
         if 42 < p.x < 47 and -16 < p.y < -1:
             continue
+        hx0, hx1, hy0, hy1 = NETHUT_KEEP
+        if hx0 < p.x < hx1 and hy0 < p.y < hy1:
+            continue
         r = RNG.random()
         if r < 0.3:
             rr = RNG.uniform(0.15, 0.55)
@@ -1564,6 +1727,8 @@ def build_terrain_json(path):
                 g = 0.0
             if 29.8 <= x <= 36.2 and 4.4 <= y <= 10.2:
                 g = 0.0
+            if 16.2 <= x <= 19.8 and -11.9 <= y <= -7.6:
+                g = 0.0  # under the internet hut and its porch
             if (p - OAK).length < 2.3 or (p - Vector((0, 0.7))).length < 0.9:
                 g = 0.0
             hs.append(round(h, 3))
@@ -1706,6 +1871,7 @@ def main():
     foliage_m = material("Foliage", rough=0.8)
     water_m = material("WaterM", "6fb4d6", rough=0.08, vertex_colors=False)
     glow_m = material("GlowM", "ffcf73", rough=0.5, vertex_colors=False, emission=2.0)
+    screen_m = material("ScreenM", "b4f2d6", rough=0.25, vertex_colors=False, emission=2.4)
 
     trunks, foliage = Batch(), Batch()
     n = build_trees(trunks, foliage)
@@ -1727,6 +1893,8 @@ def main():
 
     build_ground(village)
     build_water(water_m)
+    nethut, screen = Batch(), Batch()
+    build_nethut(nethut, foliage, screen)  # built last so the random scatter elsewhere stays as it was
     trunks.to_object("Trunks", village)
     foliage.to_object("Foliage", foliage_m, sharp_angle=1.4)
     burrow.to_object("Burrow", village)
@@ -1737,6 +1905,8 @@ def main():
     glow_k.to_object("Glow.bakery", glow_m)
     square.to_object("Square", village)
     glow_l.to_object("Glow.lamp", glow_m)
+    nethut.to_object("NetHut", village)
+    screen.to_object("Screen.nethut", screen_m)
     for name, bt in (("Patch", patch), ("Stream", stream), ("Halt", halt), ("WoodsAndClearing", woods), ("Decor", decor)):
         bt.to_object(name, village)
 

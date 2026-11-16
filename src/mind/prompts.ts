@@ -5,8 +5,8 @@ import { energyWord, moodWord, needThoughts, pressingWords } from '../body.ts';
 import type { Rng } from '../rng.ts';
 import type { Completed, State } from '../state.ts';
 import { ago, clock, partOfDay, weekday } from '../time.ts';
-import { actionDef, ACTION_IDS } from '../world/actions.ts';
-import { PLACES } from '../world/places.ts';
+import { actionDef, ACTION_IDS, OWN_KINDS } from '../world/actions.ts';
+import { PLACE_IDS, PLACES } from '../world/places.ts';
 import { isWet, names, presentAt, verb, WEATHER_WORDS } from '../world/village.ts';
 import { habit, NEEDS, type NeedId } from '../config.ts';
 import type { Sense } from './decide.ts';
@@ -34,7 +34,8 @@ const VILLAGE = `The village: Bramwell the badger (he) runs the bakery. Old Wren
 export function characterSheet(s?: State): string {
   const learned = s?.learned ?? [];
   const extra = learned.length ? `\n\nLearned about itself over time:\n${learned.map((l) => `- ${l.text}`).join('\n')}` : '';
-  return `${CHARACTER_BASE}${extra}\n\n${VILLAGE}`;
+  const hut = s?.world.can?.net ? ' Down the lane there is an internet hut, where an old computer on the porch can look up anything Khina wonders about.' : '';
+  return `${CHARACTER_BASE}${extra}\n\n${VILLAGE}${hut}`;
 }
 
 export const CHARACTER = characterSheet();
@@ -48,12 +49,15 @@ How to choose:
 - Khina is not a helper and has no goals beyond today. Khina does things because of how they feel, not to be useful or to improve.
 - Fit the moment: the weather, the hour, who is around, what Khina has just been doing.
 - Make the picks genuinely different from each other, not five versions of one idea.
-${s?.features.habitWords ? "- Khina has a few habits. Options marked as one of Khina's habits are things this particular hedgehog keeps coming back to; lean toward them when nothing pressing says otherwise. Options Khina hardly ever does are less likely, though not impossible.\n" : ''}
+${s?.world.can?.own ? `- Khina is free to do anything a small hedgehog could do in this village, not only what is listed. If Khina would rather do something not on the list, pick "own" and say what. Ideas of Khina's own are welcome, as long as they fit this village and a hedgehog's paws. To look something up, use "browse" (when it is listed), never "own".
+` : ''}${s?.features.habitWords ? "- Khina has a few habits. Options marked as one of Khina's habits are things this particular hedgehog keeps coming back to; lean toward them when nothing pressing says otherwise. Options Khina hardly ever does are less likely, though not impossible.\n" : ''}
 For each pick:
 - action: its id from the list.
 - reason: what goes through Khina's head right now. First person, under 15 words, plain words. Not a description of the option.
 - weight: 1 to 10, how much Khina wants it right now.
 - detail: only for options marked [say what]. Under 8 concrete words, specific to today (what to whittle, what to talk about). Otherwise an empty string.
+- For "own", detail is required: what Khina will actually do, under 8 words ("float a leaf boat down the stream").
+- place and kind: only for "own". place is where Khina would do it (one of: ${PLACE_IDS.filter((p) => p !== 'nethut').join(', ')}). kind is what sort of thing it is (one of: ${OWN_KINDS.join(', ')}). For every other option, empty strings.
 
 ${characterSheet(s)}`;
 
@@ -93,8 +97,10 @@ export const DECIDE_SCHEMA = {
           reason: { type: 'string' },
           weight: { type: 'integer' },
           detail: { type: 'string' },
+          place: { type: 'string', enum: ['', ...PLACE_IDS] },
+          kind: { type: 'string', enum: ['', ...OWN_KINDS] },
         },
-        required: ['action', 'reason', 'weight', 'detail'],
+        required: ['action', 'reason', 'weight', 'detail', 'place', 'kind'],
         additionalProperties: false,
       },
     },
@@ -155,6 +161,7 @@ export function lately(s: State, hours = 8): string {
 function optionLine(o: Option, s: State, own: Set<string>): string {
   const where = o.place === s.place ? 'right here' : `${PLACES[o.place].name}, ${o.travel} min walk`;
   const ask = o.def.detailAsk ? ` [say what: ${o.def.detailAsk}]` : '';
+  if (o.def.id === 'own') return `- own: ${o.def.label}${ask} (anywhere in the village)`;
   const notes = [o.note, habitNote(s, o.def, own), o.familiarity >= habit.noteAt ? 'done a lot lately' : ''].filter(Boolean);
   return `- ${o.def.id}: ${o.def.label}${ask} (${where}${notes.length ? `; ${notes.join('; ')}` : ''})`;
 }
@@ -204,6 +211,10 @@ export function decidePrompt(s: State, list: Option[], rng: Rng): string {
   if (mems.length) lines.push('Comes to mind:', ...mems.map((m) => `- ${sentence(m.text)} (${m.where}, ${ago(s.t, m.t)})`));
   const tastes = tastesLine(s, rng);
   if (tastes) lines.push(tastes);
+  const pieces = (s.pieces ?? []).slice(-3);
+  if (pieces.length) lines.push(`Made lately: ${pieces.map((p) => `"${p.title}" (${p.form === 'toy' ? 'a little game' : `a ${p.form}`})`).join(', ')}.`);
+  const reads = (s.readings ?? []).slice(-2);
+  if (reads.length) lines.push('Found out on the internet lately:', ...reads.map((r) => `- ${sentence(r.learned)}`));
   lines.push('', `Lately: ${lately(s)}`);
   if (last) lines.push(`Just finished: ${sentence(last.outcome)}`);
   lines.push('', 'What Khina could do next:', ...rng.shuffle(list).map((o) => optionLine(o, s, own)));

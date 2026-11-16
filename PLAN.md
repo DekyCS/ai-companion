@@ -196,6 +196,12 @@ Falling back to the Claude subscription when credits run out: see the note at th
      - Runs at 60 fps on this Mac. `?lite` drops ambient occlusion and thins the grass for slower machines.
 5. Visitors: notes and gifts.
 6. Making things, the shop, rent and the approval queue.
+   - 2026-11-16, built ahead of phase 5 at the user's request ("it can do anything", "an internet building"). Live server only; every experiment runs exactly as before (the new actions are blocked unless the sim is given a piece store, and the stand-in model's favourites skip them).
+     - Khina's own ideas (`own` in `src/world/actions.ts`): the model may propose anything a hedgehog could do in the village, with a place and a kind (making, social, nature, exploring, rest, home). The kind sets the effects, so the body still weighs it, and each kind goes stale and becomes a taste on its own (`own.nature`, `own.making`).
+     - Real pieces (`src/mind/making.ts`, `src/pieces.ts`): `make` (picture, poem, short story, song, little game) and the shed's `draw` (charcoal on bark) produce the real thing on Sonnet 5.5. Code picks the form from Khina's words, adds one random constraint and the titles to avoid, and checks every piece before it is stored (SVG stripped of scripts, links and foreign content; tunes limited to real pitches; games get a no-network sandbox). Trial: 5 of 5 pieces usable, $0.004 (poem) to $0.022 (game), 4 to 14 s.
+     - The internet hut (`nethut`, `browse`): Sonnet 5.5 with web search (at most 2 searches), read-only, gentle-topics rule, page text treated as information. What Khina found becomes a thought, a memory and a line in later prompts. Trial: $0.035 and 12 s per lookup.
+     - Budget: pieces and the internet share `KHINA_EXTRAS_CAP_USD` (default $0.30 a day) inside the daily cap; when it runs out, making is words only and the hut's computer stays off.
+     - UI inspired by pinos.world's layout (needs strip, "right now" card, status pill, menu, bottom sheets for Diary, Gallery, Internet), in Khina's own palette.
 
 ## Where the evidence is
 

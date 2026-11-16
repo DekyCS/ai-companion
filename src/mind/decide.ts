@@ -3,8 +3,10 @@
 
 import { mind, taste } from '../config.ts';
 import type { Rng } from '../rng.ts';
-import type { Completed, Origin, State } from '../state.ts';
-import { actionDef } from '../world/actions.ts';
+import type { Completed, Origin, Reading, State } from '../state.ts';
+import type { PieceDraft, PieceRequest } from './making.ts';
+import { actionDef, OWN_FALLBACK, OWN_KINDS, type OwnKind } from '../world/actions.ts';
+import { PLACE_IDS, type PlaceId } from '../world/places.ts';
 import { favourites, habits } from './habit.ts';
 import { options, shortlist, tier, type Option } from './score.ts';
 import type { ReflectInput, ReflectOutput } from './sleep.ts';
@@ -14,6 +16,9 @@ export interface Candidate {
   reason: string;
   weight: number;
   detail: string;
+  /** Only for "own": where Khina wants to do it, and what kind of thing it is. */
+  place?: string;
+  kind?: string;
   /** Added by code (its own favourite), not proposed by the model. */
   fromCode?: boolean;
 }
@@ -42,6 +47,12 @@ export interface Mind {
   narrate(s: State, rec: Completed, recentLines: string[], sense: Sense): Promise<string | null>;
   /** Night jobs while Khina sleeps. Optional: without it, code does the night alone. */
   reflect?(s: State, input: ReflectInput): Promise<ReflectOutput | null>;
+  /** Real work (live server): can it be done right now, within today's budget? */
+  canWork?(): boolean;
+  /** Makes a real piece; returns it checked, or why not. */
+  makePiece?(s: State, req: PieceRequest): Promise<PieceDraft | string>;
+  /** Looks something up on the web; returns what was found, or why not. */
+  browse?(s: State, question: string, onMind: string): Promise<Reading | string>;
   stats(): MindStats;
 }
 
@@ -60,6 +71,8 @@ export interface Decision {
   detail: string;
   reason: string;
   origin: Origin;
+  /** Where to do it, when the action itself does not say (Khina's own ideas). */
+  place?: PlaceId;
   /** Why code decided alone, when it did. */
   why: string;
   menu: { id: string; score: number }[];
@@ -115,11 +128,12 @@ function normalize(items: { id: string; w: number }[]): { id: string; p: number 
 function autopilot(s: State, list: Option[], rng: Rng, why: string, origin: Origin, id: number): Decision {
   const top = list.slice(0, mind.autopilotTopN);
   const pick = rng.weighted(top, (o) => o.score);
+  const fallback = pick.def.id === 'own' ? rng.pick(OWN_FALLBACK) : null;
   return {
     id,
     t: s.t,
-    actionId: pick.def.id,
-    detail: pickDetail(pick, rng),
+    actionId: fallback ? `own.${fallback.kind}` : pick.def.id,
+    detail: fallback ? fallback.detail : pickDetail(pick, rng),
     reason: templateReason(pick, s, rng),
     origin,
     why,
@@ -130,6 +144,8 @@ function autopilot(s: State, list: Option[], rng: Rng, why: string, origin: Orig
 }
 
 const round = (x: number) => Math.round(x * 1000) / 1000;
+
+const ALWAYS_OFFERED = new Set(['own', 'browse']);
 
 /** When code should not bother asking the model. */
 export function autopilotReason(s: State, list: Option[], m: Mind): string | null {
@@ -163,6 +179,9 @@ export async function decide(s: State, rng: Rng, m: Mind, id: number): Promise<D
       explore = true;
     }
   }
+  // Khina's own ideas and the internet are doors to anything, not one more pastime: when they are
+  // possible they are always on the menu, and the body's score still weighs the final pick.
+  for (const o of all) if (ALWAYS_OFFERED.has(o.def.id) && !list.includes(o)) list = [...list, o];
   const d = await choose(s, rng, m, id, list);
   if (explore) d.explore = true;
   return d;
@@ -210,11 +229,13 @@ async function choose(s: State, rng: Rng, m: Mind, id: number, list: Option[]): 
   const kept = combined.filter((x) => x.w >= bestW * mind.candidatePruneRatio);
   const pick = rng.weighted(kept, (x) => x.w);
 
+  const own = pick.o.def.id === 'own' ? ownChoice(pick.c, s.place, rng) : null;
   return {
     id,
     t: s.t,
-    actionId: pick.o.def.id,
-    detail: pickDetail(pick.o, rng, pick.c.detail),
+    actionId: own ? own.actionId : pick.o.def.id,
+    detail: own ? own.detail : pickDetail(pick.o, rng, pick.c.detail),
+    place: own?.place,
     reason: pick.c.reason.replace(/\s+/g, ' ').trim().slice(0, 120) || templateReason(pick.o, s, rng),
     origin: 'model',
     why: '',
@@ -222,4 +243,20 @@ async function choose(s: State, rng: Rng, m: Mind, id: number, list: Option[]): 
     candidates: marked,
     probabilities: normalize(kept.map((x) => ({ id: x.o.def.id, w: x.w }))),
   };
+}
+
+/** Turns the model's own idea into something the sim can run: a kind (for its effects) and a place. */
+export function ownChoice(c: Candidate, here: PlaceId, rng: Rng): { actionId: string; detail: string; place: PlaceId } {
+  const kind = (OWN_KINDS as readonly string[]).includes(c.kind ?? '') ? (c.kind as OwnKind) : null;
+  // Without a "what", the reason usually says it ("I want to sniff the evening air").
+  const fromReason = (c.reason ?? '').replace(/^(I('d| would)? (want|like|need) to|Could|Might|Time to|Let me)\s+/i, '').replace(/[.;].*$/, '');
+  let detail = (c.detail || fromReason).replace(/\s+/g, ' ').trim();
+  if (detail.length > 70) detail = detail.slice(0, 70).replace(/[\s,;:]+\S*$/, '');
+  if (!detail || !kind) {
+    const f = rng.pick(OWN_FALLBACK);
+    return { actionId: `own.${f.kind}`, detail: f.detail, place: here };
+  }
+  // The internet hut's computer is reached through "browse", which is costed and capped.
+  const place = (PLACE_IDS as string[]).includes(c.place ?? '') && c.place !== 'nethut' ? (c.place as PlaceId) : here;
+  return { actionId: `own.${kind}`, detail, place };
 }

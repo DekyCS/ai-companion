@@ -1,6 +1,6 @@
 // The forest village. Coordinates are rough hedgehog-scale distances.
 
-export type PlaceId = 'burrow' | 'shed' | 'bakery' | 'square' | 'patch' | 'stream' | 'woods' | 'clearing' | 'halt';
+export type PlaceId = 'burrow' | 'shed' | 'bakery' | 'square' | 'patch' | 'stream' | 'woods' | 'clearing' | 'halt' | 'nethut';
 
 export interface Place {
   id: PlaceId;
@@ -25,6 +25,7 @@ export const PLACES: Record<PlaceId, Place> = {
   woods: { id: 'woods', name: 'the deep woods', short: 'the woods', x: -6, y: 6, outdoors: true, at: 'in the woods' },
   clearing: { id: 'clearing', name: 'the mossy clearing', short: 'the clearing', x: -3, y: 10, outdoors: true, at: 'in the clearing' },
   halt: { id: 'halt', name: 'the little train halt', short: 'the halt', x: 14, y: -3, outdoors: true, at: 'at the halt' },
+  nethut: { id: 'nethut', name: 'the internet hut, where an old computer hums on the porch', short: 'the internet hut', x: 6, y: -3, outdoors: true, at: 'at the internet hut' },
 };
 
 export const PLACE_IDS = Object.keys(PLACES) as PlaceId[];

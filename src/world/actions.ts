@@ -3,7 +3,7 @@
 
 import type { Effects } from '../config.ts';
 import type { Rng } from '../rng.ts';
-import { pantryTotal, type Activity, type FoodId, type State } from '../state.ts';
+import { pantryTotal, type Activity, type FoodId, type PieceForm, type State } from '../state.ts';
 import { clock, hourOf, isDark, isNight, nextMorning } from '../time.ts';
 import type { PlaceId } from './places.ts';
 import { bakeryOpen, isWet, names, nextTrain, presentAt, verb, VILLAGERS, type VillagerId } from './village.ts';
@@ -66,6 +66,11 @@ export interface ActionDef {
   outcome?: (c: Ctx, act: Activity) => Outcome;
   /** False for actions too small to be worth a diary line. */
   diary?: boolean;
+  /**
+   * Real work done while the action runs (live server with the model on): 'piece' makes a real
+   * drawing, poem, song or game; 'web' looks something up online. The outcome reads act.result.
+   */
+  work?: 'piece' | 'web';
 }
 
 const FOOD: Record<FoodId, { one: string; fullness: number }> = {
@@ -282,8 +287,22 @@ export const ACTIONS: ActionDef[] = [
     effects: { making: 24, calm: 4 },
     detailAsk: 'what to draw',
     details: ['the old oak', 'Bramwell asleep behind the counter', 'the train', 'a very large beetle', 'rain on the stream'],
-    outcome: ({ rng }, act) =>
-      rng.chance(0.85)
+    work: 'piece',
+    outcome: ({ rng }, act) => {
+      const r = act.result;
+      if (r?.kind === 'piece')
+        return {
+          text: `drew "${r.piece.title}" in charcoal on bark (${act.detail})`,
+          made: `a charcoal drawing, "${r.piece.title}"`,
+          thought: { key: 'made', text: `Drew "${r.piece.title}"`, value: 4, hours: 10 },
+        };
+      if (r)
+        return {
+          text: `started drawing ${act.detail}, smudged it with a paw and gave up`,
+          extra: { making: -10 },
+          thought: { key: 'smudged', text: 'Smudged a drawing', value: -2, hours: 3 },
+        };
+      return rng.chance(0.85)
         ? {
             text: `drew ${act.detail} in charcoal on bark`,
             made: `a charcoal drawing of ${act.detail.replace(/^(an? )?(quick )?(charcoal )?(sketch|drawing|picture) of /i, '')}`,
@@ -293,7 +312,8 @@ export const ACTIONS: ActionDef[] = [
             text: `started drawing ${act.detail}, smudged it with a paw and gave up`,
             extra: { making: -10 },
             thought: { key: 'smudged', text: 'Smudged a drawing', value: -2, hours: 3 },
-          },
+          };
+    },
   },
   {
     id: 'sort',
@@ -803,6 +823,84 @@ export const ACTIONS: ActionDef[] = [
     }),
   },
 
+  // Anywhere, beyond the fixed village life. Only on the menu when the sim allows it (s.world.can),
+  // so experiments run exactly as before.
+  {
+    id: 'make',
+    place: 'here',
+    label: 'make something of my own: a picture, a poem, a short story, a song or a little game',
+    doing: 'making something',
+    gist: 'making something of my own',
+    topic: 'making',
+    effort: 'easy',
+    minutes: [40, 80],
+    effects: { making: 30, novelty: 8, rest: -4 },
+    detailAsk: 'what to make and in what form, e.g. "a song about the heron"',
+    details: ['a poem about the oak', 'a picture of the stream', 'a song for rainy days', 'a story about a lost button'],
+    blocked: ({ s }) => (s.world.can?.make ? null : 'there was nothing to make it with'),
+    work: 'piece',
+    outcome: ({ rng }, act) => {
+      const r = act.result;
+      if (r?.kind === 'piece')
+        return {
+          text: `${FORM_DID[r.piece.form]}, "${r.piece.title}" (${act.detail})`,
+          made: `${FORM_A[r.piece.form]}, "${r.piece.title}"`,
+          thought: { key: 'made', text: `Made "${r.piece.title}"`, value: 5, hours: 12 },
+        };
+      if (r)
+        return {
+          text: `tried to make ${act.detail}, but it would not come out right`,
+          extra: { making: -8 },
+          thought: { key: 'spoiled', text: 'Something I tried to make would not come right', value: -2, hours: 3 },
+        };
+      return rng.chance(0.8)
+        ? { text: `made ${act.detail}`, made: act.detail, thought: { key: 'made', text: `Made ${act.detail}`, value: 3, hours: 8 } }
+        : { text: `tried to make ${act.detail}, but gave up halfway`, extra: { making: -6 } };
+    },
+  },
+  {
+    id: 'browse',
+    place: 'nethut',
+    label: 'look something up on the internet',
+    doing: 'looking something up on the old computer',
+    gist: 'looking things up on the internet',
+    topic: 'exploring',
+    effort: 'easy',
+    minutes: [25, 50],
+    effects: { novelty: 32, calm: 2, rest: -3 },
+    detailAsk: 'what to look up: a question Khina wonders about',
+    details: ['how far can a hedgehog walk in a night', 'why do herons stand so still'],
+    blocked: ({ s }) => (s.world.can?.net ? null : 'the old computer would not switch on'),
+    work: 'web',
+    outcome: (_c, act) => {
+      const r = act.result;
+      if (r?.kind === 'web')
+        return {
+          text: `looked up "${r.reading.question}" on the internet and found out that ${r.reading.learned.replace(/^[A-Z]/, (c) => c.toLowerCase())}`,
+          thought: { key: 'learned', text: `Found out on the internet: ${r.reading.learned}`, value: 3, hours: 24 },
+        };
+      return {
+        text: 'sat at the old computer, but the internet only showed a spinning circle',
+        extra: { calm: -4 },
+        thought: { key: 'net', text: 'The internet would not load', value: -2, hours: 3 },
+      };
+    },
+  },
+  {
+    id: 'own',
+    place: 'here',
+    label: 'something else entirely, an idea of my own',
+    doing: 'doing something of my own',
+    gist: 'an idea of my own',
+    topic: 'exploring',
+    effort: 'easy',
+    minutes: [25, 60],
+    effects: { novelty: 14, making: 6, calm: 6 },
+    detailAsk: 'what exactly, under 8 words; also give place and kind',
+    blocked: ({ s }) => (s.world.can?.own ? null : 'nothing else came to mind'),
+    outcome: (c, act) => ownOutcome(c, act),
+  },
+
   // Anywhere
   {
     id: 'idle',
@@ -819,11 +917,71 @@ export const ACTIONS: ActionDef[] = [
   },
 ];
 
+const FORM_DID: Record<PieceForm, string> = {
+  picture: 'drew a picture',
+  poem: 'wrote a poem',
+  story: 'wrote a very short story',
+  song: 'made up a song',
+  toy: 'made a little game',
+};
+const FORM_A: Record<PieceForm, string> = {
+  picture: 'a picture',
+  poem: 'a poem',
+  story: 'a short story',
+  song: 'a song',
+  toy: 'a little game',
+};
+
+/**
+ * Khina's own ideas. The model says what, where and which kind; the kind decides what it does to
+ * each need, so the body still weighs it, and each kind goes stale and becomes a taste on its own
+ * ("own.nature" and "own.making" are different things to get used to).
+ */
+export const OWN_KINDS = ['making', 'social', 'nature', 'exploring', 'rest', 'home'] as const;
+export type OwnKind = (typeof OWN_KINDS)[number];
+
+const OWN_EFFECTS: Record<OwnKind, { effects: ActionDef['effects']; effort: ActionDef['effort']; gist: string }> = {
+  making: { effects: { making: 24, novelty: 6, rest: -4 }, effort: 'easy', gist: 'building or fixing something of my own' },
+  social: { effects: { company: 22, calm: 2, rest: -3 }, effort: 'easy', gist: 'my own idea with the neighbours' },
+  nature: { effects: { calm: 18, novelty: 6, rest: -3 }, effort: 'easy', gist: 'my own idea outdoors' },
+  exploring: { effects: { novelty: 26, rest: -6 }, effort: 'hard', gist: 'finding out something of my own' },
+  rest: { effects: { rest: 14, calm: 10 }, effort: 'rest', gist: 'a quiet idea of my own' },
+  home: { effects: { calm: 16, making: 4 }, effort: 'easy', gist: 'pottering about my own way' },
+};
+
+/** When code picks "own" by itself it has no idea of its own; these stand in. */
+export const OWN_FALLBACK: { detail: string; kind: OwnKind }[] = [
+  { detail: 'count the stones along the path', kind: 'nature' },
+  { detail: 'stack pebbles into a careful tower', kind: 'making' },
+  { detail: 'listen to the wind in the oak', kind: 'rest' },
+  { detail: 'rearrange the finds by colour', kind: 'home' },
+];
+
+function ownOutcome({ s, rng }: Ctx, act: Activity) {
+  const kind = act.actionId.split('.')[1] as OwnKind | undefined;
+  if (kind === 'social' && presentAt(s.world, act.place).length === 0)
+    return { text: `went to ${act.detail}, but nobody was about`, extra: { company: -6 }, thought: { key: 'alone', text: 'Nobody was about', value: -2, hours: 3 } };
+  return rng.chance(0.85)
+    ? { text: `did something of Khina's own: ${act.detail}`, thought: { key: 'own', text: `Did my own thing: ${act.detail}`, value: 3, hours: 8 } }
+    : { text: `tried something of Khina's own (${act.detail}), and it did not work out`, extra: { calm: -4 }, thought: { key: 'own', text: `My idea did not work out: ${act.detail}`, value: -2, hours: 3 } };
+}
+
+const OWN_DEFS: Record<string, ActionDef> = Object.fromEntries(
+  OWN_KINDS.map((k) => {
+    const base = ACTIONS.find((a) => a.id === 'own') as ActionDef;
+    const o = OWN_EFFECTS[k];
+    const def: ActionDef = { ...base, id: `own.${k}`, topic: k, effects: o.effects, effort: o.effort, gist: o.gist, blocked: undefined };
+    return [def.id, def];
+  }),
+);
+
 export const ACTION_BY_ID: Record<string, ActionDef> = Object.fromEntries(ACTIONS.map((a) => [a.id, a]));
 export const ACTION_IDS = ACTIONS.map((a) => a.id);
+/** Actions beyond the fixed village life (live server only; blocked in experiments). */
+export const BEYOND_IDS = new Set(['make', 'browse', 'own']);
 
 export function actionDef(id: string): ActionDef {
-  const def = ACTION_BY_ID[id];
+  const def = ACTION_BY_ID[id] ?? OWN_DEFS[id];
   if (!def) throw new Error(`unknown action ${id}`);
   return def;
 }

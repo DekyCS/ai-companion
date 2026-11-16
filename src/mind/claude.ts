@@ -11,11 +11,12 @@ import Anthropic, {
 } from '@anthropic-ai/sdk';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { budget, cacheReadFactor, cacheWriteFactor, effort, models, prices, spendLedgerPath } from '../config.ts';
+import { budget, cacheReadFactor, cacheWriteFactor, effort, models, prices, spendLedgerPath, webSearchUsd } from '../config.ts';
 import type { Rng } from '../rng.ts';
-import type { Completed, State } from '../state.ts';
+import type { Completed, Reading, State } from '../state.ts';
 import { stamp } from '../time.ts';
 import type { Candidate, Mind, MindStats, Proposal, Sense } from './decide.ts';
+import { checkPiece, checkReading, makePrompt, makeSystem, MAKE_SCHEMA, webPrompt, webSystem, WEB_SCHEMA, type PieceDraft, type PieceRequest } from './making.ts';
 import { decidePrompt, DECIDE_SCHEMA, decideSystem, diaryPrompt, DIARY_SCHEMA, diarySystem, reflectSystem } from './prompts.ts';
 import { reflectPrompt, REFLECT_SCHEMA, type ReflectInput, type ReflectOutput } from './sleep.ts';
 import type { Option } from './score.ts';
@@ -25,6 +26,7 @@ interface Usage {
   output_tokens: number;
   cache_creation_input_tokens?: number | null;
   cache_read_input_tokens?: number | null;
+  server_tool_use?: { web_search_requests?: number | null } | null;
 }
 
 export function costOf(model: string, u: Usage): number {
@@ -32,7 +34,8 @@ export function costOf(model: string, u: Usage): number {
   if (!p) return 0;
   const cw = u.cache_creation_input_tokens ?? 0;
   const cr = u.cache_read_input_tokens ?? 0;
-  return (u.input_tokens * p.input + cw * p.input * cacheWriteFactor + cr * p.input * cacheReadFactor + u.output_tokens * p.output) / 1e6;
+  const searches = (u.server_tool_use?.web_search_requests ?? 0) * webSearchUsd;
+  return (u.input_tokens * p.input + cw * p.input * cacheWriteFactor + cr * p.input * cacheReadFactor + u.output_tokens * p.output) / 1e6 + searches;
 }
 
 /** The prompt asks for 2 sentences; models overrun, so code enforces it. */
@@ -72,10 +75,16 @@ class SpendLedger {
     return this.load()[today()] ?? 0;
   }
 
-  add(usd: number): void {
+  /** The part of today's spend that went on real pieces and the internet. */
+  extrasToday(): number {
+    return this.load()[`${today()} extras`] ?? 0;
+  }
+
+  add(usd: number, extra = false): void {
     const data = this.load();
     const k = today();
     data[k] = (data[k] ?? 0) + usd;
+    if (extra) data[`${k} extras`] = (data[`${k} extras`] ?? 0) + usd;
     mkdirSync(dirname(this.path), { recursive: true });
     writeFileSync(this.path, JSON.stringify(data, null, 2));
   }
@@ -108,6 +117,7 @@ export interface ClaudeMindOptions {
   outDir: string;
   runCapUsd?: number;
   dailyCapUsd?: number;
+  extrasCapUsd?: number;
   ledgerPath?: string;
 }
 
@@ -117,6 +127,7 @@ export class ClaudeMind implements Mind {
   private ledger: SpendLedger;
   private runCap: number;
   private dailyCap: number;
+  private extrasCap: number;
   private outDir: string;
   private disabled: string | null = null;
   private pausedUntil = 0;
@@ -128,6 +139,7 @@ export class ClaudeMind implements Mind {
     this.outDir = o.outDir;
     this.runCap = o.runCapUsd ?? budget.runUsd;
     this.dailyCap = o.dailyCapUsd ?? budget.dailyUsd;
+    this.extrasCap = o.extrasCapUsd ?? budget.extrasUsd;
     this.ledger = new SpendLedger(o.ledgerPath ?? spendLedgerPath);
     mkdirSync(this.outDir, { recursive: true });
   }
@@ -144,6 +156,30 @@ export class ClaudeMind implements Mind {
     return { ...this.s };
   }
 
+  /** Real pieces and the internet: only while the model is up and today's extras budget lasts. */
+  canWork(): boolean {
+    return this.unavailable() === null && this.ledger.extrasToday() < this.extrasCap;
+  }
+
+  /** Makes a real piece. Returns the checked piece, or why it could not be made. */
+  async makePiece(s: State, req: PieceRequest): Promise<PieceDraft | string> {
+    if (!this.canWork()) return 'no budget for making today';
+    const out = await this.call('make', s, makeSystem(s), makePrompt(req), MAKE_SCHEMA, 16000, { extra: true });
+    if (!out.ok) return out.why;
+    return checkPiece(out.json, req);
+  }
+
+  /** Looks something up on the web (search only, read-only). */
+  async browse(s: State, question: string, onMind: string): Promise<Reading | string> {
+    if (!this.canWork()) return 'no budget for the internet today';
+    const out = await this.call('web', s, webSystem(s), webPrompt(question, onMind), WEB_SCHEMA, 8000, {
+      extra: true,
+      tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 2 }],
+    });
+    if (!out.ok) return out.why;
+    return checkReading(out.json, question, s.t);
+  }
+
   async propose(s: State, list: Option[], rng: Rng): Promise<Proposal> {
     const prompt = decidePrompt(s, list, rng);
     const out = await this.call('decide', s, decideSystem(s), prompt, DECIDE_SCHEMA, 2000);
@@ -157,6 +193,8 @@ export class ClaudeMind implements Mind {
         reason: String(c.reason ?? ''),
         weight: Number(c.weight ?? 1),
         detail: String(c.detail ?? ''),
+        place: String(c.place ?? ''),
+        kind: String(c.kind ?? ''),
       }));
     return { ok: true, candidates };
   }
@@ -189,32 +227,50 @@ export class ClaudeMind implements Mind {
   }
 
   private async call(
-    job: 'decide' | 'diary' | 'sleep',
+    job: 'decide' | 'diary' | 'sleep' | 'make' | 'web',
     s: State,
     system: string,
     prompt: string,
     schema: Record<string, unknown>,
     maxTokens: number,
+    o: { extra?: boolean; tools?: Anthropic.Messages.ToolUnion[] } = {},
   ): Promise<{ ok: true; json: unknown } | { ok: false; why: string }> {
     const model = models[job];
     const started = Date.now();
     const log: Record<string, unknown> = { at: stamp(s.t), t: s.t, job, model };
     appendFileSync(join(this.outDir, 'prompts.md'), `\n## ${stamp(s.t)} · ${job} · ${model}\n\n\`\`\`\n${prompt}\n\`\`\`\n`);
     try {
-      const res = await this.client.messages.create({
-        model,
-        max_tokens: maxTokens,
-        system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
-        messages: [{ role: 'user', content: prompt }],
-        output_config: { effort: effort[job], format: { type: 'json_schema', schema } },
-      });
-      const cost = costOf(model, res.usage);
-      this.record(cost, res.usage);
+      const messages: Anthropic.Messages.MessageParam[] = [{ role: 'user', content: prompt }];
+      let res: Anthropic.Messages.Message | null = null;
+      let cost = 0;
+      // A server-tool turn (web search) can pause; send it back so the server carries on.
+      for (let turn = 0; turn < 3; turn++) {
+        res = await this.client.messages.create({
+          model,
+          max_tokens: maxTokens,
+          system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+          messages,
+          ...(o.tools ? { tools: o.tools } : {}),
+          output_config: { effort: effort[job], format: { type: 'json_schema', schema } },
+        });
+        const c = costOf(model, res.usage);
+        cost += c;
+        this.record(c, res.usage, o.extra);
+        if (res.stop_reason !== 'pause_turn') break;
+        messages.push({ role: 'assistant', content: res.content });
+      }
+      if (!res) return this.fail(log, 'no answer');
       Object.assign(log, { ms: Date.now() - started, stop: res.stop_reason, usage: res.usage, costUsd: cost });
 
       if (res.stop_reason === 'refusal') return this.fail(log, 'model refused');
       if (res.stop_reason === 'max_tokens') return this.fail(log, 'answer was cut off');
-      const text = res.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+      if (res.stop_reason === 'pause_turn') return this.fail(log, 'search took too long');
+      // With tools, the JSON answer is the text after the last tool result.
+      const lastTool = res.content.map((b) => b.type !== 'text').lastIndexOf(true);
+      const text = res.content
+        .slice(lastTool + 1)
+        .map((b) => (b.type === 'text' ? b.text : ''))
+        .join('');
       let json: unknown;
       try {
         json = JSON.parse(text);
@@ -233,13 +289,13 @@ export class ClaudeMind implements Mind {
     }
   }
 
-  private record(cost: number, u: Usage): void {
+  private record(cost: number, u: Usage, extra = false): void {
     this.s.calls += 1;
     this.s.costUsd += cost;
     this.s.inputTokens += u.input_tokens + (u.cache_creation_input_tokens ?? 0);
     this.s.outputTokens += u.output_tokens;
     this.s.cacheReadTokens += u.cache_read_input_tokens ?? 0;
-    this.ledger.add(cost);
+    this.ledger.add(cost, extra);
   }
 
   private pause(ms: number, why: string): void {

@@ -5,13 +5,13 @@
 import type { Rng } from '../rng.ts';
 import { Rng as Seeded } from '../rng.ts';
 import type { State } from '../state.ts';
-import { ACTION_IDS } from '../world/actions.ts';
+import { ACTION_IDS, BEYOND_IDS } from '../world/actions.ts';
 import { offlineMind, type Mind, type Proposal } from './decide.ts';
 import type { Option } from './score.ts';
 
 export function stickyMind(seed: number): Mind {
   // One fixed preference order per copy, like a model's frozen idea of what a hedgehog "would do".
-  const order = new Seeded(seed * 31 + 7).shuffle(ACTION_IDS);
+  const order = new Seeded(seed * 31 + 7).shuffle(ACTION_IDS.filter((id) => !BEYOND_IDS.has(id)));
   const rank = new Map(order.map((id, i) => [id, i]));
   return {
     kind: 'model',

@@ -36,6 +36,16 @@ The `Dockerfile` runs `src/live.ts --model --clock real --rate 24 --persist data
 `/app/data` keeps Khina's life and the spend ledger across redeploys, and after downtime the sim
 catches up on the hours missed. Redeploy with `railway up --detach`; logs with `railway logs`.
 
+## Beyond the fixed village life (live server)
+
+On `npm run live`, Khina can also:
+- do anything of its own: Claude may propose an idea that is not on the menu, with where and what kind of thing it is; Khina's needs still weigh it;
+- make real pieces: pictures (SVG), poems, short stories, songs (a tune the page plays) and little games, kept in `<save folder>/pieces/` and shown in the Gallery;
+- look things up at the internet hut: a real web search, read-only; what Khina found shows under Internet and turns into memories.
+
+These need `--model` and stay within `KHINA_EXTRAS_CAP_USD` (default $0.30 a day, inside the daily cap).
+Pieces are served at `/pieces` (list), `/pieces/<id>.json`, `.svg` and `.html` (games run sandboxed, no network).
+
 ## Run days as text
 
 ```sh

@@ -17,6 +17,7 @@ import { createLook, type Weather } from './look.ts';
 import { createGrass, windify } from './grass.ts';
 import { addFuzz } from './fuzz.ts';
 import { createPlayer, type Player } from './player.ts';
+import { createHud, type DiaryLine, type PieceRef, type Reading } from './hud.ts';
 
 // ---------- what the server sends ----------
 interface Activity {
@@ -48,7 +49,11 @@ interface Snap {
   place: PlaceId;
   activity: Activity | null;
   letters: number;
-  diary: { t: number; clock: string; text: string; place: string }[];
+  diary: DiaryLine[];
+  pieces?: PieceRef[];
+  readings?: Reading[];
+  pages?: { day: number; text: string }[];
+  moodArc?: { t: number; mood: number }[];
 }
 type Pose = Spot['pose'];
 
@@ -324,6 +329,35 @@ const flies = new THREE.Points(flyGeo, flyMat);
 flies.frustumCulled = false;
 scene.add(flies);
 
+// ---------- HUD ----------
+// ?mock fills the HUD with made-up pieces and readings, to check it without the model.
+const mock = params.has('mock') ? await import('./mock.ts') : null;
+const hud = createHud({ canWalk: !!player, onMode: (m) => setMode(m) });
+if (mock) {
+  hud.setSource(mock.mockSource(0));
+  setTimeout(() => {
+    const p = snap ? mock.mockSnap(snap).pieces?.[0] : undefined;
+    if (p) hud.piece(p);
+  }, 4000);
+}
+
+function setMode(next: Mode) {
+  mode = next;
+  hud.setMode(mode);
+  if (mode === 'player' && player) {
+    player.takeControl();
+    // Come in close behind the bunny if the camera is far away.
+    const d = camera.position.distanceTo(controls.target);
+    if (d > 12) {
+      const back = camera.position.clone().sub(controls.target).setLength(8);
+      controls.target.copy(player.object.position).add(new THREE.Vector3(0, 0.6, 0));
+      camera.position.copy(controls.target).add(back);
+    }
+  }
+  renderer.domElement.focus();
+}
+setMode(mode);
+
 // ---------- following the sim ----------
 let snap: Snap | null = null;
 let clockT = 0;
@@ -339,8 +373,26 @@ function gameNow(): number {
   return clockT + Math.min(ahead, Math.max(1.5, snap.speed * 1.5));
 }
 
+/** For things without a spot of their own (making something, Khina's own ideas): a good spot at that place. */
+const PLACE_SPOT: Partial<Record<PlaceId, string>> = {
+  burrow: 'tidy', shed: 'draw', bakery: 'crusts', square: 'chat', patch: 'weed', stream: 'fish',
+  woods: 'forage', clearing: 'poke', halt: 'timetable', nethut: 'nethut_idle',
+};
+const KIND_POSE: Record<string, Pose> = { making: 'work', home: 'work', rest: 'sit', nature: 'sit', exploring: 'sniff', social: 'stand' };
+
 function spotOf(a: Activity | null): Spot | null {
-  return a ? (SPOTS[a.actionId] ?? null) : null;
+  if (!a) return null;
+  const own = SPOTS[a.actionId];
+  if (own) return own;
+  const kind = a.actionId === 'make' ? 'making' : a.actionId.startsWith('own.') ? a.actionId.slice(4) : null;
+  if (!kind) return null;
+  const pose = KIND_POSE[kind] ?? 'stand';
+  const base = SPOTS[`${a.place}_idle`] ?? SPOTS[PLACE_SPOT[a.place] ?? ''];
+  if (base) return base.inside ? base : { ...base, pose };
+  const at = NODE_XY[a.place]!;
+  const centre = placeXY(a.place);
+  const face: XY = Math.hypot(centre[0] - at[0], centre[1] - at[1]) > 0.5 ? centre : [at[0], at[1] + 1];
+  return { at, face, pose };
 }
 
 function endPoint(a: Activity): THREE.Vector3 {
@@ -390,16 +442,15 @@ function onSnap(next: Snap) {
       camera.position.copy(controls.target).add(new THREE.Vector3(3.2, 2.2, 5.6));
     }
   }
-  hud(next);
+  hud.update(mock ? mock.mockSnap(next) : next);
   document.getElementById('status')!.textContent = '';
-  for (const id of params.has('clean') ? [] : ['now', 'diary', 'tools', 'hint']) {
-    const el = document.getElementById(id);
-    if (el) el.hidden = false;
-  }
+  if (!params.has('clean')) hud.show();
 }
 
 const events = new EventSource('/events');
 events.addEventListener('snap', (e) => onSnap(JSON.parse((e as MessageEvent).data).snap));
+events.addEventListener('piece', (e) => hud.piece(JSON.parse((e as MessageEvent).data).piece));
+events.addEventListener('reading', (e) => hud.reading(JSON.parse((e as MessageEvent).data).reading));
 events.addEventListener('clock', (e) => {
   clockT = JSON.parse((e as MessageEvent).data).t;
   clockAt = performance.now();
@@ -408,82 +459,6 @@ events.onerror = () => {
   document.getElementById('status')!.textContent = 'Lost the village. Reconnecting…';
 };
 
-// ---------- HUD ----------
-const NEED_LABELS: [string, string][] = [
-  ['fullness', 'Belly'],
-  ['rest', 'Rest'],
-  ['calm', 'Calm'],
-  ['company', 'Company'],
-  ['novelty', 'Something new'],
-  ['making', 'Making'],
-];
-const WEATHER: Record<Weather, string> = { clear: 'clear', cloudy: 'grey', drizzle: 'drizzle', rain: 'rain', fog: 'fog' };
-const capital = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
-
-function hud(s: Snap) {
-  document.getElementById('when')!.textContent = `Day ${s.day} · ${s.weekday} ${s.part} · ${s.clock} · ${WEATHER[s.weather]}`;
-  const a = s.activity;
-  let doing = 'Deciding what to do';
-  if (a?.kind === 'walk') doing = `On the way to ${PLACES[a.place].short}, to ${a.label}`;
-  else if (a) doing = capital(a.doing) + (a.detail ? ` (${a.detail})` : '');
-  document.getElementById('doing')!.textContent = doing;
-  document.getElementById('why')!.textContent = a?.reason ? `“${a.reason}”` : '';
-  const needs = document.getElementById('needs')!;
-  needs.replaceChildren();
-  const row = (label: string, value: number, cls = '') => {
-    const name = document.createElement('span');
-    name.textContent = label;
-    const bar = document.createElement('div');
-    bar.className = `bar ${cls}`;
-    const fill = document.createElement('i');
-    fill.style.width = `${Math.max(0, Math.min(100, value))}%`;
-    bar.append(fill);
-    needs.append(name, bar);
-  };
-  row('Mood', s.mood, 'mood');
-  for (const [k, label] of NEED_LABELS) row(label, s.needs[k] ?? 0);
-  const lines = document.getElementById('lines')!;
-  lines.replaceChildren(
-    ...s.diary
-      .slice(-5)
-      .reverse()
-      .map((d) => {
-        const p = document.createElement('p');
-        const time = document.createElement('time');
-        time.textContent = d.clock;
-        p.append(time, d.text);
-        return p;
-      }),
-  );
-  const pace = s.speed === 1 ? '1 game minute a second' : s.speed < 0.02 ? 'real time' : `${s.speed} game minutes a second`;
-  document.getElementById('brain')!.textContent = `Brain: ${s.brain} · ${pace}`;
-}
-
-const followBtn = document.getElementById('follow')!;
-const walkBtn = document.getElementById('walk');
-function setMode(next: Mode) {
-  mode = next;
-  followBtn.setAttribute('aria-pressed', String(mode === 'khina'));
-  walkBtn?.setAttribute('aria-pressed', String(mode === 'player'));
-  if (mode === 'player' && player) {
-    player.takeControl();
-    // Come in close behind the bunny if the camera is far away.
-    const d = camera.position.distanceTo(controls.target);
-    if (d > 12) {
-      const back = camera.position.clone().sub(controls.target).setLength(8);
-      controls.target.copy(player.object.position).add(new THREE.Vector3(0, 0.6, 0));
-      camera.position.copy(controls.target).add(back);
-    }
-  }
-  renderer.domElement.focus();
-}
-followBtn.addEventListener('click', () => setMode('khina'));
-walkBtn?.addEventListener('click', () => {
-  if (!player) return;
-  setMode('player');
-});
-if (!player && walkBtn) walkBtn.hidden = true;
-setMode(mode);
 
 // ---------- animation ----------
 const forcedPose = params.get('pose');
