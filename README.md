@@ -27,6 +27,14 @@ The models are made in Blender by script, from `art/khina.py`, `art/village.py` 
 what you can't walk through), the editable `art/*.blend` files and preview pictures in `art/previews/`.
 Where everything stands is in `src/world/layout.ts`, shared by Blender and the browser.
 
+## Always on (Railway)
+
+Live at https://khina-production.up.railway.app: Claude is the brain, on the real clock (`TZ`, so
+Khina's night is your night), about $0.023 a day, capped by `KHINA_DAILY_CAP_USD` (default $1).
+The `Dockerfile` runs `src/live.ts --model --clock real --persist data/khina-state.json`; a volume at
+`/app/data` keeps Khina's life and the spend ledger across redeploys, and after downtime the sim
+catches up on the hours missed. Redeploy with `railway up --detach`; logs with `railway logs`.
+
 ## Run days as text
 
 ```sh

@@ -1,0 +1,11 @@
+node_modules
+runs
+data
+video-inspo
+.env
+.git
+art/*.blend
+art/previews
+art/refs
+research_notes
+reports
