@@ -15,7 +15,8 @@
         --bar: #e6dccb;
       }
       * { box-sizing: border-box; }
-      html, body { margin: 0; height: 100%; overflow: hidden; background: #bfe0f5; font-family: Nunito, ui-rounded, system-ui, sans-serif; color: var(--ink); }
+      [hidden] { display: none !important; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #cfe0ea; font-family: Nunito, ui-rounded, system-ui, sans-serif; color: var(--ink); }
       #app { position: fixed; inset: 0; }
       .card { position: fixed; background: var(--card); border-radius: 16px; padding: 12px 14px; box-shadow: 0 6px 24px rgba(40, 30, 20, 0.15); backdrop-filter: blur(6px); }
       #now { top: 16px; left: 16px; width: min(360px, calc(100vw - 32px)); }
@@ -35,6 +36,9 @@
       #tools button { font: inherit; font-weight: 700; border: 0; border-radius: 10px; padding: 6px 10px; background: var(--bar); color: var(--ink); cursor: pointer; }
       #tools button[aria-pressed='true'] { background: var(--accent); color: white; }
       #status { position: fixed; inset: 0; display: grid; place-items: center; font-size: 18px; font-weight: 800; color: var(--ink); pointer-events: none; }
+      #hint { bottom: 16px; right: 16px; font-size: 13px; color: var(--soft); padding: 8px 12px; }
+      #hint b { color: var(--ink); }
+      canvas { outline: none; }
       @media (max-width: 640px) { #tools { top: auto; bottom: calc(34vh + 32px); } #diary { font-size: 13px; } }
     </style>
     <script type="importmap">
@@ -54,7 +58,9 @@
     <div id="tools" class="card" hidden>
       <span id="brain"></span>
       <button id="follow" aria-pressed="true">Follow Khina</button>
+      <button id="walk" aria-pressed="false">Walk around</button>
     </div>
+    <div id="hint" class="card" hidden><b>WASD</b> walk · <b>Shift</b> run · <b>Space</b> hop · drag to look</div>
     <div id="status">Waking up the village…</div>
     <script type="module" src="/web/main.ts"></script>
   </body>

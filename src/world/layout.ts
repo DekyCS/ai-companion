@@ -26,6 +26,8 @@ export const APPROACH: Partial<Record<PlaceId, XY>> = {
 export const JUNCTIONS: Record<string, XY> = {
   lane: [13.5, -1.5],
   fork: [-4.5, 12],
+  // West of the oak, so the way to the woods goes round the trunk and its roots, not through them.
+  oakwest: [-4.4, -0.6],
 };
 
 /** Dirt paths between places and junctions. Khina walks along these. */
@@ -39,7 +41,8 @@ export const PATHS: [string, string][] = [
   ['square', 'bakery'],
   ['patch', 'bakery'],
   ['square', 'halt'],
-  ['burrow', 'fork'],
+  ['burrow', 'oakwest'],
+  ['oakwest', 'fork'],
   ['fork', 'woods'],
   ['fork', 'clearing'],
 ];

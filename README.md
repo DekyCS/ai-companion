@@ -13,11 +13,18 @@ npm run live -- --model           # Claude chooses and writes (about $0.023 a ga
 ```
 
 The server runs the sim and streams each event to the page, which walks Khina along the village paths
-to the spot for each action. Drag to look around; "Follow Khina" keeps the camera on him.
-`?pose=curl&dist=3` (or walk, sniff, work, eat, sit, paddle) holds a pose, for checking animations.
+to the spot for each action. Drag to look around; "Follow Khina" keeps the camera on Khina.
 
-The models are made in Blender by script, from `art/khina.py` and `art/village.py`; `npm run art` rebuilds
-`art/export/*.glb`, the editable `art/*.blend` files and preview pictures in `art/previews/`.
+Walk around yourself as a little felt bunny: **WASD** or the arrow keys (relative to the camera),
+**Shift** to run, **Space** to hop. The first key press hands you the camera; "Follow Khina" gives it back.
+Khina looks up at you when you come close.
+
+Debug views: `?pose=curl&dist=3` (or walk, sniff, work, eat, sit, paddle) holds a pose; `?hour=19.5`
+and `?weather=rain` fix the light; `?clean` hides the panels; `?lite` is lighter for slow machines.
+
+The models are made in Blender by script, from `art/khina.py`, `art/village.py` and `art/visitor.py`;
+`npm run art` rebuilds `art/export/*.glb`, `art/export/terrain.json` (ground height, where grass grows,
+what you can't walk through), the editable `art/*.blend` files and preview pictures in `art/previews/`.
 Where everything stands is in `src/world/layout.ts`, shared by Blender and the browser.
 
 ## Run days as text
