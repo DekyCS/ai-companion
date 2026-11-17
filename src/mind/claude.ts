@@ -50,6 +50,12 @@ const today = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
+/** How much of today's extras budget may be spent by `now`: an even share per hour, 1.5 hours ahead. */
+export function extrasAllowance(cap: number, now: Date): number {
+  const hours = now.getHours() + now.getMinutes() / 60;
+  return cap * Math.min(1, (hours + 1.5) / 24);
+}
+
 /** Real money spent per real calendar day, shared by every run on this machine. */
 /**
  * Shared by every run, including runs going on side by side, so it re-reads the file on every
@@ -156,9 +162,13 @@ export class ClaudeMind implements Mind {
     return { ...this.s };
   }
 
-  /** Real pieces and the internet: only while the model is up and today's extras budget lasts. */
-  canWork(): boolean {
-    return this.unavailable() === null && this.ledger.extrasToday() < this.extrasCap;
+  /**
+   * Real pieces and the internet: only while the model is up and today's extras budget lasts.
+   * The budget is let out through the day (plus a little head start), so a fast clock cannot
+   * spend it all in the first hours after midnight and leave the rest of the day empty.
+   */
+  canWork(now = new Date()): boolean {
+    return this.unavailable() === null && this.ledger.extrasToday() < extrasAllowance(this.extrasCap, now);
   }
 
   /** Makes a real piece. Returns the checked piece, or why it could not be made. */

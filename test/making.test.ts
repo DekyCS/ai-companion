@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { extrasAllowance } from '../src/mind/claude.ts';
 import { ownChoice } from '../src/mind/decide.ts';
 import { checkPiece, checkReading, cleanHtml, cleanNotes, cleanSvg, formFor, pieceRequest } from '../src/mind/making.ts';
 import { Rng } from '../src/rng.ts';
@@ -69,4 +70,11 @@ test('own ideas get a kind and a real place, or a stand-in', () => {
   assert.equal(b.place, 'burrow');
   const c = ownChoice({ action: 'own', reason: '', weight: 5, detail: '', place: '', kind: '' }, 'shed', rng);
   assert.match(c.actionId, /^own\./);
+});
+
+test('the extras budget is let out through the day, not spent by 2 a.m.', () => {
+  const at = (h: number) => new Date(2026, 10, 17, h, 0);
+  assert.ok(extrasAllowance(0.3, at(0)) > 0.015 && extrasAllowance(0.3, at(0)) < 0.025);
+  assert.ok(Math.abs(extrasAllowance(0.3, at(12)) - 0.16875) < 1e-9);
+  assert.equal(extrasAllowance(0.3, at(23)), 0.3);
 });

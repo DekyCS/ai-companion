@@ -423,7 +423,7 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
   };
 
   const TABS: Record<SheetKind, [string, string][]> = {
-    diary: [['today', 'today'], ['nights', 'nights']],
+    diary: [['recent', 'recent'], ['nights', 'nights']],
     gallery: [['all', 'everything'], ['picture', 'pictures'], ['words', 'words'], ['song', 'songs'], ['toy', 'games']],
     internet: [],
   };
@@ -529,9 +529,17 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
         out.push(e);
       }
     } else {
-      const lines = s.diary.filter((d) => d.day === undefined || d.day === s.day).reverse();
-      if (!lines.length) out.push(el('div', 'empty', 'Nothing in the diary yet today.'));
+      // Every recent line, newest first, under a header per Khina day: at a fast clock a day
+      // lasts an hour, so "today only" was often empty while Khina slept.
+      const lines = [...s.diary].reverse();
+      if (!lines.length) out.push(el('div', 'empty', 'Nothing in the diary yet.'));
+      let shownDay: number | undefined;
       for (const d of lines) {
+        if (d.day !== undefined && d.day !== shownDay) {
+          shownDay = d.day;
+          const head = d.day === s.day ? `Khina's day ${d.day} · today` : d.day === s.day - 1 ? `Khina's day ${d.day} · yesterday` : `Khina's day ${d.day}`;
+          out.push(el('div', 'dayhead', head));
+        }
         const e = el('div', 'entry');
         const top = el('div', 'top');
         top.append(el('span', 'chip', d.place));
