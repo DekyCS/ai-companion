@@ -63,6 +63,41 @@ likes, follows or messages), with no links, mentions, hashtags or selling.
 - `KHINA_PUBLIC_URL` links a shared piece on Bluesky.
 Pieces are served at `/pieces` (list), `/pieces/<id>.json`, `.svg` and `.html` (games run sandboxed, no network).
 
+## Khina asks
+
+Some things only a person can do for Khina: make an account, add a new place or tool to the village,
+build a feature. So at night, while she writes her page, Khina may ask the Keeper (whoever looks after
+her) for one such thing, in her own words with a short why. Code keeps it rare: fewer than 3 asks
+waiting and none in the last 12 real hours, so at most about 2 a real day (most nights she asks for
+nothing). It turns away anything about money, buying or selling, links and mentions, and repeats of an
+ask still waiting. Asks need `--model` (the night page is Claude's job) and show on the site under
+the menu → **Khina asks**, where anyone can read them.
+
+Only the Keeper can answer, once a day or whenever:
+
+1. Make a new random key with `openssl rand -hex 24` and set it as `KHINA_KEEPER_KEY` in
+   Railway → the service → Variables (locally: `KHINA_KEEPER_KEY=... npm run live`). Use a new random
+   key, never a password you use anywhere else (not the one for Khina's accounts). Without it, or with
+   one shorter than 24 characters, nobody can answer. After 20 wrong keys in 10 minutes nobody can
+   answer for 10 minutes, and the server log counts the wrong keys (it never prints them).
+2. On your own browser, open `https://khina-production.up.railway.app/#keeper` and type the key in the
+   box (your password manager can keep it). `/#keeper=<key>` works too, also on a tab that is already
+   open, and the page takes the key out of the address bar, but that address stays in the browser's
+   history. Either way the page keeps the key in that browser only.
+3. Under each open ask there are three buttons, **Done**, **Not now** and **No**, and a box for a note
+   (up to 300 characters). "forget key" at the bottom of the sheet takes the key off that browser.
+
+Your note is public: it shows on the site and in her diary, and she reads it on later nights. Never
+put passwords or emails in it (email addresses and links are taken out anyway).
+
+The answer reaches Khina in the village: a letter from the Keeper lands in her letterbox
+(`About "<her ask>": done. <your note>`), the flag goes up, and when she reads it she is glad, patient
+or a little let down, and remembers which ask it was. She sees her answered asks on later nights, so
+she doesn't ask again.
+Behind the buttons: `POST /asks/<id>` with `{"status": "done" | "notnow" | "no", "note": "..."}` and
+the header `x-keeper-key` (`src/asks.ts`); `POST /asks/check` with the header only tries the key
+(204 good, 403 wrong, 503 answering is off).
+
 ## Run days as text
 
 ```sh
@@ -70,7 +105,7 @@ npm run day -- --offline          # one day on code alone, free
 npm run day                       # one day with Claude choosing and writing (needs a key)
 npm run long -- --compare         # 40 days × 3 seeds, phase 2 off vs on, repetition measures (free)
 npm run copies -- --compare       # 5 identical copies × 40 days: do they become individuals? (free)
-npm test                          # 69 tests
+npm test                          # 90 tests
 npm run check                     # type-check the sim and the page
 ```
 

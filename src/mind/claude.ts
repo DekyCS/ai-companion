@@ -18,7 +18,7 @@ import { stamp } from '../time.ts';
 import type { Candidate, Mind, MindStats, Proposal, Sense } from './decide.ts';
 import { checkPiece, checkReading, cleanPost, makePrompt, makeSystem, MAKE_SCHEMA, postPrompt, postSystem, POST_SCHEMA, webPrompt, webSystem, WEB_SCHEMA, type PieceDraft, type PieceRequest } from './making.ts';
 import { decidePrompt, DECIDE_SCHEMA, decideSystem, diaryPrompt, DIARY_SCHEMA, diarySystem, HEDGEHOG_SELF, reflectSystem } from './prompts.ts';
-import { reflectPrompt, REFLECT_SCHEMA, type ReflectInput, type ReflectOutput } from './sleep.ts';
+import { reflectPrompt, reflectSchema, type ReflectInput, type ReflectOutput } from './sleep.ts';
 import type { Option } from './score.ts';
 
 interface Usage {
@@ -268,16 +268,19 @@ export class ClaudeMind implements Mind {
 
   /** Night jobs on the bigger model. Any failure returns null and code does the night alone. */
   async reflect(s: State, input: ReflectInput): Promise<ReflectOutput | null> {
-    const out = await this.call('sleep', s, reflectSystem(s), reflectPrompt(s, input), REFLECT_SCHEMA, 6000);
+    // The schema with an ask only on a night she may ask the Keeper; otherwise exactly as before.
+    const out = await this.call('sleep', s, reflectSystem(s), reflectPrompt(s, input), reflectSchema(input), 6000);
     if (!out.ok) return null;
     const j = out.json as Record<string, unknown>;
     const strings = (v: unknown) => (Array.isArray(v) ? v.map(String) : []);
+    const ask = input.asks && typeof j.ask === 'object' && j.ask !== null ? (j.ask as Record<string, unknown>) : null;
     return {
       page: String(j.page ?? ''),
       keep: strings(j.keep),
       drop: strings(j.drop),
       sheetLine: String(j.sheet_line ?? ''),
       evidence: String(j.evidence ?? ''),
+      ...(ask ? { ask: { text: String(ask.text ?? ''), why: String(ask.why ?? '') } } : {}),
     };
   }
 

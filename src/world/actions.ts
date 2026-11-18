@@ -3,10 +3,10 @@
 
 import type { Effects } from '../config.ts';
 import type { Rng } from '../rng.ts';
-import { FOOD_IDS, pantryTotal, type Activity, type FoodId, type PieceForm, type State } from '../state.ts';
+import { FOOD_IDS, pantryTotal, type Activity, type AskAnswer, type FoodId, type PieceForm, type State } from '../state.ts';
 import { clock, hourOf, isDark, isNight, nextMorning } from '../time.ts';
 import type { PlaceId } from './places.ts';
-import { bakeryOpen, isWet, names, nextTrain, presentAt, verb, VILLAGERS, type VillagerId } from './village.ts';
+import { bakeryOpen, isWet, names, nextTrain, presentAt, senderName, verb, VILLAGERS, type Letter, type VillagerId } from './village.ts';
 
 export interface Ctx {
   s: State;
@@ -71,6 +71,39 @@ export interface ActionDef {
    * drawing, poem, song or game; 'web' looks something up online. The outcome reads act.result.
    */
   work?: 'piece' | 'web' | 'post';
+}
+
+/** How the Keeper's answer to one of her asks feels once she reads it: glad at a yes, patient at "not
+ * now", a little let down at a no, and over it soon. The thought names the ask, so two answers stay two
+ * memories (memories with the same words are merged). */
+const KEEPER_ANSWER: Record<AskAnswer, { say: string; thought: (what?: string) => string; value: number; hours: number; extra: Effects }> = {
+  done: { say: 'done', thought: (w) => (w ? `The Keeper did what I asked: "${w}"` : 'The Keeper did what I asked for'), value: 5, hours: 12, extra: { novelty: 10, company: 12 } },
+  notnow: { say: 'not now', thought: (w) => `The Keeper said not now to ${w ? `"${w}"` : 'what I asked'}. I can wait`, value: 1, hours: 6, extra: { novelty: 6, company: 8 } },
+  no: { say: 'no, sorry', thought: (w) => `The Keeper said no to ${w ? `"${w}"` : 'what I asked'}. Fair enough`, value: -2, hours: 3, extra: { company: 6 } },
+};
+
+/** Her ask, short enough for a thought: cut at a word, without the closing question mark. */
+function askShort(text: string, max = 60): string {
+  const t = text.replace(/[\s.?!]+$/, '');
+  return t.length <= max ? t : `${t.slice(0, max - 1).replace(/\s+\S*$/, '')}…`;
+}
+
+/** Reading a letter from the Keeper (src/asks.ts writes it when the Keeper answers on the site). */
+function keeperLetter(letter: Letter): Outcome {
+  const status = letter.ask?.status ?? 'done';
+  const a = KEEPER_ANSWER[status];
+  const asked = letter.ask?.text;
+  const note = letter.ask?.note;
+  // In her words, like the villagers' notes (the note quoted), and never ending on a full stop, so a
+  // "going stale" ending reads on cleanly. A letter from before the ask rode along keeps its own text.
+  const text = asked
+    ? `found a letter from the Keeper in the letterbox, about what Khina asked for ("${askShort(asked, 200)}"): ${a.say}${note ? `. The Keeper wrote: "${note}"` : ''}`
+    : `found a letter from the Keeper in the letterbox. It said: "${letter.text}"`;
+  return {
+    text,
+    extra: a.extra,
+    thought: { key: `keeper-${status}`, text: a.thought(asked ? askShort(asked) : undefined), value: a.value, hours: a.hours },
+  };
 }
 
 const FOOD: Record<FoodId, { one: string; fullness: number }> = {
@@ -240,7 +273,8 @@ export const ACTIONS: ActionDef[] = [
           thought: { key: 'letterbox-empty', text: 'The letterbox was empty again', value: -1, hours: 2 },
         };
       }
-      const from = VILLAGERS[letter.from].name;
+      if (letter.from === 'keeper') return keeperLetter(letter);
+      const from = senderName(letter.from);
       return {
         text: `found a note from ${from} in the letterbox. It said: "${letter.text}"`,
         extra: { novelty: 10, company: 10 },

@@ -2,6 +2,7 @@
 // the trains, and the post.
 
 import type { Rng } from '../rng.ts';
+import type { AskAnswer } from '../state.ts';
 import { DAY, hourOf, isSunday, isWeekend, minuteOfDay } from '../time.ts';
 import type { PlaceId } from './places.ts';
 
@@ -75,10 +76,21 @@ export function nextTrain(t: number): number {
   return start + DAY + (TRAINS[0] as number);
 }
 
+/** Who a letter can come from: a villager, or the Keeper (the human who looks after the village),
+ * answering something Khina asked for. */
+export type Sender = VillagerId | 'keeper';
+
 export interface Letter {
-  from: VillagerId;
+  from: Sender;
   text: string;
   t: number;
+  /** A letter from the Keeper: which of Khina's asks it answers, how, what she asked and the Keeper's note. */
+  ask?: { id: string; status: AskAnswer; text?: string; note?: string };
+}
+
+/** A sender's name as Khina would write it ("Old Wren", "the Keeper"). */
+export function senderName(from: Sender): string {
+  return from === 'keeper' ? 'the Keeper' : VILLAGERS[from].name;
 }
 
 const LETTERS: { from: VillagerId; text: string }[] = [

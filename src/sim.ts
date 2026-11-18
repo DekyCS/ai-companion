@@ -60,6 +60,8 @@ export interface SimOptions {
    * village life is exactly the fixed one, so experiments measure what they always measured.
    */
   pieces?: PieceStore;
+  /** Live server only: at night Khina may ask the Keeper for something (src/asks.ts). */
+  asks?: boolean;
 }
 
 /** How long the sim waits, at most, for real work to come back when an action ends. */
@@ -81,6 +83,7 @@ export class Sim {
   private readonly onEvent: ((e: Record<string, unknown>) => void) | null;
   private decisionCount = 0;
   private readonly pieces: PieceStore | null;
+  private readonly asks: boolean;
   /** Real work running for an activity, by decision id. */
   private readonly jobs = new Map<number, Promise<WorkResult>>();
   /** Random numbers for real work, kept off the seeded stream. */
@@ -95,6 +98,7 @@ export class Sim {
     this.onLine = o.onLine ?? (() => {});
     this.onEvent = o.onEvent ?? null;
     this.pieces = o.pieces ?? null;
+    this.asks = o.asks ?? false;
     s.pieces ??= [];
     s.readings ??= [];
     if (this.outDir) mkdirSync(this.outDir, { recursive: true });
@@ -140,10 +144,14 @@ export class Sim {
   }
 
   private async reflect(day: number): Promise<void> {
-    const page = await nightly(this.s, day, this.log.filter((r) => reportDay(r.start) === day), this.mind);
+    const { ask, ...page } = await nightly(this.s, day, this.log.filter((r) => reportDay(r.start) === day), this.mind, { asks: this.asks });
     this.event({ type: 'night', ...page, beliefs: this.s.beliefs, learned: this.s.learned });
     if (page.text) this.onLine(`${' '.repeat(10)}night ☾ ${page.text}`);
     if (page.sheetLine) this.onLine(`${' '.repeat(10)}sheet + ${page.sheetLine}`);
+    if (ask) {
+      this.event({ type: 'ask', ask });
+      this.onLine(`${' '.repeat(10)}✋ asked the Keeper: ${ask.text}${ask.why ? ` (${ask.why})` : ''}`);
+    }
   }
 
   private hourly(): void {
@@ -158,7 +166,9 @@ export class Sim {
       this.onLine(`${stamp(s.t)}  ✦ ${drama.text}`);
     }
     const h = hourOf(s.t);
-    if (h >= 8 && h < 19 && w.letters.length < 2 && this.rng.chance(0.06)) {
+    // At most 2 village letters waiting. The Keeper's answers always get in and don't count here,
+    // so a waiting answer never holds up the village post.
+    if (h >= 8 && h < 19 && w.letters.filter((l) => l.from !== 'keeper').length < 2 && this.rng.chance(0.06)) {
       w.letters.push(newLetter(s.t, this.rng));
       w.flagSeen = false;
       this.event({ type: 'letter', from: w.letters[w.letters.length - 1]?.from });

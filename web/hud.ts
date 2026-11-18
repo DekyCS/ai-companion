@@ -1,7 +1,8 @@
 // Everything drawn over the village: how Khina feels, what Khina is doing right now, the clock,
-// a feed of the latest diary lines, and sheets for the diary, the gallery of things Khina made
-// and what Khina looked up on the internet. Every string from the server goes in as text, never
-// as HTML; only http(s) addresses become links.
+// a feed of the latest diary lines, and sheets for the diary, the gallery of things Khina made,
+// what Khina looked up on the internet, and what Khina asked the Keeper for (with answer buttons
+// for the Keeper only). Every string from the server goes in as text, never as HTML; only http(s)
+// addresses become links.
 
 import { PLACES, type PlaceId } from '../src/world/places.ts';
 
@@ -34,6 +35,22 @@ export interface Post {
   about: string;
   piece?: { id: string; title: string; form: PieceForm };
   sent?: Record<string, string>;
+}
+/** Something Khina asked the Keeper (the human who looks after the village) for. */
+export type AskAnswer = 'done' | 'notnow' | 'no';
+export interface Ask {
+  id: string;
+  /** Game minute she asked. */
+  t: number;
+  /** Real time she asked (epoch ms). */
+  at: number;
+  text: string;
+  why: string;
+  status: 'open' | AskAnswer;
+  answeredAt?: number;
+  note?: string;
+  clock?: string;
+  day?: number;
 }
 export interface DiaryLine {
   t: number;
@@ -74,6 +91,8 @@ export interface HudSnap {
   postsTo?: string[];
   pages?: { day: number; text: string }[];
   moodArc?: { t: number; mood: number }[];
+  /** What she asked the Keeper for, newest first. */
+  asks?: Ask[];
 }
 
 /** Where pieces come from: the server, or made-up ones for ?mock. */
@@ -115,6 +134,7 @@ export interface Hud {
   piece(p: PieceRef): void;
   reading(r: Reading): void;
   post(p: Post): void;
+  ask(a: Ask): void;
   setMode(m: Mode): void;
   setSource(src: PieceSource): void;
   show(): void;
@@ -137,7 +157,13 @@ let pace = 1;
 
 /** How long ago, in real time: Khina's clock runs faster than the visitor's. */
 function ago(now: number, then: number): string {
-  const m = Math.max(0, Math.round((now - then) / pace));
+  return agoMinutes(Math.max(0, Math.round((now - then) / pace)));
+}
+
+/** How long ago a real time (epoch ms) was, in the same words. */
+const agoReal = (ms: number) => agoMinutes(Math.max(0, Math.round((Date.now() - ms) / 60_000)));
+
+function agoMinutes(m: number): string {
   if (m < 2) return 'just now';
   if (m < 60) return `${m} min ago`;
   if (m < 1440) return `${Math.round(m / 60)} h ago`;
@@ -160,6 +186,7 @@ const ICONS: Record<string, string> = {
   diary: P('<path d="M5 4h10a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h10"/>'),
   gallery: P('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 16l5-5 4 4 3-3 6 6"/><circle cx="16" cy="9" r="1.6"/>'),
   internet: P('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/>'),
+  asks: P('<path d="M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-7l-5 4v-4H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M9.8 8.4a2.3 2.3 0 1 1 3.3 2.1c-.7.3-1.1.8-1.1 1.5"/><path d="M12 14.6h.01"/>'),
   follow: P('<circle cx="12" cy="12" r="3"/><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/>'),
   walk: P('<circle cx="7" cy="9" r="2"/><circle cx="12" cy="6.5" r="2"/><circle cx="17" cy="9" r="2"/><path d="M8 17c0-3 2-5 4-5s4 2 4 5c0 2-2 3-4 3s-4-1-4-3z"/>'),
   menu: P('<path d="M5 7h14M5 12h14M5 17h14"/>'),
@@ -320,6 +347,53 @@ function playSong(p: PieceFull, onEnd: () => void): () => void {
   return stopper;
 }
 
+// ---------- the Keeper ----------
+// The Keeper opens the site once with #keeper (the page asks for the key) or #keeper=<key>, also on a
+// tab that is already open. The key is kept in this browser only (storage can be off, so every use is
+// wrapped) and taken out of the address bar, so it is not shared by accident with a copied link. With
+// it, open asks get answer buttons; visitors never see them.
+const KEEPER_STORE = 'khina.keeperKey';
+
+function storedKeeperKey(): string | null {
+  try {
+    return localStorage.getItem(KEEPER_STORE);
+  } catch {
+    return null;
+  }
+}
+
+function storeKeeperKey(key: string | null): void {
+  try {
+    if (key) localStorage.setItem(KEEPER_STORE, key);
+    else localStorage.removeItem(KEEPER_STORE);
+  } catch {
+    /* storage is off: the key lasts until the page is closed */
+  }
+}
+
+/**
+ * The Keeper's hand-over in the address, removed from it straight away: the key from #keeper=<key>,
+ * '' for a bare #keeper (ask for the key on the page, so it never has to be in an address), or null.
+ */
+function keeperFromHash(): string | null {
+  const m = /^#keeper(?:=(.*))?$/.exec(location.hash);
+  if (!m) return null;
+  history.replaceState(null, '', location.pathname + location.search);
+  try {
+    return decodeURIComponent(m[1] ?? '').trim();
+  } catch {
+    return (m[1] ?? '').trim();
+  }
+}
+
+const ANSWER_SAY: Record<AskAnswer, string> = { done: 'done', notnow: 'not now', no: 'no, sorry' };
+const ANSWER_CHIP: Record<Ask['status'], [string, string]> = {
+  open: ['waiting', 'chip orange'],
+  done: ['done', 'chip moss'],
+  notnow: ['not now', 'chip'],
+  no: ['no', 'chip rose'],
+};
+
 // ---------- the HUD ----------
 export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): Hud {
   let source: PieceSource = httpSource;
@@ -366,10 +440,20 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
   for (const i of document.querySelectorAll<HTMLElement>('#menu [data-icon]')) i.innerHTML = ICONS[i.dataset.icon!] ?? '';
   const menu = $('menu');
   const menuBtn = $('menuBtn');
+  // How many asks are waiting for the Keeper, on the menu button and on "Khina asks".
+  const menuBadge = el('b', 'badge');
+  const asksBadge = el('b', 'badge');
+  menuBadge.hidden = asksBadge.hidden = true;
+  menuBtn.append(menuBadge);
+  document.querySelector('#menu [data-sheet="asks"] .round')?.append(asksBadge);
   const setMenu = (show: boolean) => {
     menu.hidden = !show;
+    // On shorter screens the menu reaches down to the diary feed: the feed steps aside while it is open.
+    $('hud').classList.toggle('menuOpen', show);
     menuBtn.setAttribute('aria-expanded', String(show));
     menuBtn.innerHTML = show ? ICONS.close! : ICONS.menu!;
+    // While the menu is open, the count sits on "Khina asks" itself.
+    if (!show) menuBtn.append(menuBadge);
   };
   menuBtn.addEventListener('click', () => setMenu(Boolean(menu.hidden)));
   for (const b of document.querySelectorAll<HTMLButtonElement>('#menu [data-sheet]')) {
@@ -437,7 +521,7 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
   }
 
   // ---------- sheets ----------
-  type SheetKind = 'diary' | 'gallery' | 'internet';
+  type SheetKind = 'diary' | 'gallery' | 'internet' | 'asks';
   const sheet = $('sheet');
   const scrim = $('scrim');
   const body = $('sheetBody');
@@ -461,8 +545,10 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     diary: [['recent', 'recent'], ['nights', 'nights']],
     gallery: [['all', 'everything'], ['picture', 'pictures'], ['words', 'words'], ['song', 'songs'], ['toy', 'games']],
     internet: [['looked', 'looked up'], ['posts', 'posts']],
+    // "waiting" like the chip on each card; renderAsks adds the counts.
+    asks: [['open', 'waiting'], ['answered', 'answered']],
   };
-  const TITLES: Record<SheetKind, string> = { diary: 'Diary', gallery: 'Things Khina made', internet: 'Khina on the internet' };
+  const TITLES: Record<SheetKind, string> = { diary: 'Diary', gallery: 'Things Khina made', internet: 'Khina on the internet', asks: 'Khina asks' };
 
   function openSheet(kind: SheetKind, opts: { piece?: string; tab?: string } = {}) {
     stopSong?.();
@@ -475,6 +561,7 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     tabsEl.replaceChildren(
       ...TABS[kind].map(([id, label]) => {
         const b = el('button', '', label);
+        b.dataset.tab = id;
         b.setAttribute('role', 'tab');
         b.setAttribute('aria-selected', String(id === tab));
         b.addEventListener('click', () => {
@@ -494,6 +581,8 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
   function closeSheet() {
     stopSong?.();
     open = null;
+    notice = null;
+    keyBox = false;
     sheet.hidden = true;
     scrim.hidden = true;
     body.replaceChildren();
@@ -511,7 +600,221 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     if (!open || !snap) return;
     if (open === 'diary') renderDiary(snap);
     else if (open === 'internet') renderInternet(snap);
+    else if (open === 'asks') renderAsks(snap, force);
     else if (force || !viewing) void renderGallery(snap, force);
+  }
+
+  // ---------- Khina asks ----------
+  let keeperKey = storedKeeperKey();
+  /** Show a box for the key: opened with a bare #keeper, or after a key did not work. */
+  let keyBox = false;
+  /** The server can't take answers (KHINA_KEEPER_KEY unset or too short): no buttons, and a line saying why. */
+  let keeperOff = false;
+  /** Opened with #keeper before the first snapshot: show the asks as soon as it is in. */
+  let asksOnStart = false;
+  /** A line at the top of the sheet: an answer sent (good), or why it did not go through. */
+  let notice: { text: string; good?: boolean } | null = null;
+  let asksKey = '';
+  /** What the Keeper has typed per ask, kept across re-renders and across a key typed again. */
+  const drafts = new Map<string, string>();
+  const sending = new Set<string>();
+
+  /**
+   * #keeper or #keeper=<key>, on load or added to a tab that is already open (no reload comes then).
+   * True when it handed over a key (which useKey has already tried).
+   */
+  function takeKeeperHash(): boolean {
+    const k = keeperFromHash();
+    if (k === null) return false;
+    notice = null;
+    if (k) useKey(k);
+    else if (!keeperKey) keyBox = true;
+    if (snap) openSheet('asks');
+    else asksOnStart = true;
+    return !!k;
+  }
+
+  function useKey(k: string) {
+    keeperKey = k;
+    storeKeeperKey(k);
+    keyBox = false;
+    keeperOff = false;
+    void checkKey();
+  }
+
+  function forgetKey() {
+    keeperKey = null;
+    storeKeeperKey(null);
+    keeperOff = false;
+  }
+
+  /** Tries the key once when keeper mode starts, so a wrong one shows before a note is typed. */
+  async function checkKey() {
+    const k = keeperKey;
+    if (!k) return;
+    let r: Response;
+    try {
+      r = await fetch('/asks/check', { method: 'POST', headers: { 'x-keeper-key': k } });
+    } catch {
+      return; // offline: the answer itself will say
+    }
+    if (k !== keeperKey) return;
+    if (r.status === 204) keeperOff = false;
+    else keyRefused(r.status, r.status === 503);
+    if (open === 'asks' && snap) renderAsks(snap, true);
+  }
+
+  /** What a refused key means: a wrong one is forgotten (the notes typed stay), one the server can't use yet is kept. */
+  function keyRefused(status: number, off: boolean): boolean {
+    if (off) {
+      keeperOff = true;
+      notice = { text: 'Answering is off on the server: KHINA_KEEPER_KEY is not set there, or is too short.' };
+    } else if (status === 403) {
+      forgetKey();
+      keyBox = true;
+      notice = { text: "That key didn't work. Type it again below." };
+    } else if (status === 429) {
+      notice = { text: 'Too many wrong keys lately. Try again in 10 minutes.' };
+    } else return false;
+    return true;
+  }
+
+  // A key kept from an earlier visit is tried once too.
+  if (!takeKeeperHash() && keeperKey) void checkKey();
+  addEventListener('hashchange', () => void takeKeeperHash());
+
+  function renderAsks(s: HudSnap, force: boolean) {
+    const asks = s.asks ?? [];
+    const key = JSON.stringify([tab, !!keeperKey, keyBox, keeperOff, notice, [...sending], asks.map((a) => [a.id, a.status])]);
+    if (!force && key === asksKey) return;
+    // Never pull a box away while the Keeper is typing in it.
+    const typing = (document.activeElement instanceof HTMLTextAreaElement || document.activeElement instanceof HTMLInputElement) && body.contains(document.activeElement);
+    if (!force && typing) return;
+    asksKey = key;
+    const waiting = asks.filter((a) => a.status === 'open');
+    // Answered ones newest answer first: an old ask answered today comes to the top.
+    const answeredList = asks.filter((a) => a.status !== 'open').sort((a, b) => (b.answeredAt ?? 0) - (a.answeredAt ?? 0));
+    for (const b of tabsEl.querySelectorAll<HTMLElement>('[data-tab]')) {
+      const n = b.dataset.tab === 'open' ? waiting.length : answeredList.length;
+      b.textContent = `${b.dataset.tab === 'open' ? 'waiting' : 'answered'} · ${n}`;
+    }
+    const out: HTMLElement[] = [el('p', 'intro', "Some things a bunny can't do by herself. Khina asks the Keeper, who looks after the village and reads her asks once a day. The answer comes to her letterbox.")];
+    if (notice) out.push(el('div', notice.good ? 'notice good' : 'notice', notice.text));
+    if (keyBox && !keeperKey) out.push(keyForm());
+    const answered = tab === 'answered';
+    const list = answered ? answeredList : waiting;
+    if (!list.length) out.push(el('div', 'empty', answered ? 'Nothing answered yet.' : 'Nothing waiting. Most nights Khina asks for nothing.'));
+    for (const a of list) out.push(askCard(a));
+    if (keeperKey) {
+      const line = el('div', 'keeperline', 'keeper · ');
+      const forget = el('a', '', 'forget key');
+      forget.href = '#';
+      forget.addEventListener('click', (e) => {
+        e.preventDefault();
+        forgetKey();
+        notice = null;
+        renderAsks(snap!, true);
+      });
+      line.append(forget);
+      out.push(line);
+    }
+    body.replaceChildren(...out);
+  }
+
+  /** Only after a bare #keeper or a key that did not work: the key typed here never goes in an address. */
+  function keyForm(): HTMLElement {
+    const f = el('form', 'keeper keyform');
+    const input = el('input');
+    input.type = 'password';
+    input.autocomplete = 'current-password';
+    input.placeholder = "The Keeper's key";
+    input.setAttribute('aria-label', "The Keeper's key");
+    const go = el('button', 'kbtn done', 'Use key');
+    go.type = 'submit';
+    f.append(input, go);
+    f.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const k = input.value.trim();
+      if (!k) return;
+      notice = null;
+      useKey(k);
+      renderAsks(snap!, true);
+    });
+    return f;
+  }
+
+  function askCard(a: Ask): HTMLElement {
+    const e = el('div', 'entry ask');
+    const top = el('div', 'top');
+    const [word, cls] = ANSWER_CHIP[a.status] ?? ANSWER_CHIP.open;
+    top.append(el('span', cls, word), el('span', 't', `Khina's day ${a.day ?? '?'} · ${a.clock ?? ''} · ${agoReal(a.at)}`));
+    e.append(top, el('h4', '', a.text));
+    if (a.why) e.append(el('p', 'why', a.why));
+    if (a.status !== 'open') {
+      const ans = el('div', 'answer');
+      const head = el('div', 'ah');
+      head.append(el('b', '', `The Keeper: ${ANSWER_SAY[a.status]}`));
+      if (a.answeredAt) head.append(el('span', '', agoReal(a.answeredAt)));
+      ans.append(head);
+      if (a.note) ans.append(el('p', '', a.note));
+      e.append(ans);
+    } else if (keeperKey && !keeperOff) {
+      e.append(keeperControls(a));
+    }
+    return e;
+  }
+
+  /** Only in keeper mode: the three answers and a note for Khina. */
+  function keeperControls(a: Ask): HTMLElement {
+    const box = el('div', 'keeper');
+    const note = el('textarea');
+    note.maxLength = 300;
+    note.rows = 2;
+    // The note is public: it shows on the site, in her letter and diary, and on her later nights.
+    note.placeholder = 'A note for Khina (everyone can read it)';
+    note.setAttribute('aria-label', 'A note for Khina. Everyone can read it.');
+    note.value = drafts.get(a.id) ?? '';
+    note.addEventListener('input', () => drafts.set(a.id, note.value));
+    const row = el('div', 'kbtns');
+    for (const [status, label] of [['done', 'Done'], ['notnow', 'Not now'], ['no', 'No']] as const) {
+      const b = el('button', `kbtn ${status}`, label);
+      b.type = 'button';
+      b.disabled = sending.has(a.id);
+      b.addEventListener('click', () => void answer(a, status, note.value));
+      row.append(b);
+    }
+    box.append(note, row);
+    return box;
+  }
+
+  async function answer(a: Ask, status: AskAnswer, note: string) {
+    if (!keeperKey || sending.has(a.id)) return;
+    sending.add(a.id);
+    notice = null;
+    renderAsks(snap!, true);
+    let r: Response | null = null;
+    try {
+      r = await fetch(`/asks/${encodeURIComponent(a.id)}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-keeper-key': keeperKey },
+        body: JSON.stringify({ status, note: note.trim() }),
+      });
+    } catch {
+      r = null;
+    }
+    sending.delete(a.id);
+    const j = r ? ((await r.json().catch(() => null)) as { ask?: Ask; off?: boolean } | null) : null;
+    if (r?.ok) {
+      drafts.delete(a.id);
+      // Moves to "answered" now; the server's next snapshot says the same.
+      if (snap?.asks) snap = { ...snap, asks: snap.asks.map((x) => (x.id === a.id ? (j?.ask ?? { ...x, status, answeredAt: Date.now(), note: note.trim() }) : x)) };
+      // In the sheet the line says so; a toast would sit over the cards.
+      if (open === 'asks') notice = { text: "Sent. It's in Khina's letterbox.", good: true };
+      else showToast("Sent. It's in Khina's letterbox", 'see', () => openSheet('asks', { tab: 'answered' }));
+    } else if (!r || !keyRefused(r.status, !!j?.off)) {
+      notice = { text: r?.status === 409 ? 'That one was already answered.' : r?.status === 404 ? 'That ask is gone.' : 'Could not send that. Try again.' };
+    }
+    if (open === 'asks' && snap) renderAsks(snap, true);
   }
 
   function moodArc(s: HudSnap): HTMLElement | null {
@@ -809,6 +1112,16 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
       linkedPiece = null;
       openSheet('gallery', { piece: id });
     }
+    if (asksOnStart) {
+      asksOnStart = false;
+      openSheet('asks');
+    }
+    const waiting = (s.asks ?? []).filter((a) => a.status === 'open').length;
+    for (const b of [menuBadge, asksBadge]) {
+      b.textContent = String(waiting);
+      b.hidden = waiting === 0;
+    }
+    menuBtn.title = waiting ? `Menu · Khina is waiting on ${waiting} ask${waiting === 1 ? '' : 's'}` : 'Menu';
     for (const [key] of NEEDS) {
       const v = key === 'mood' ? s.mood : (s.needs[key] ?? 0);
       const n = needBars.get(key)!;
@@ -841,7 +1154,7 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     const st = $('statusText');
     st.replaceChildren(el('b', '', 'Khina'), ` is ${d.status}`);
     renderFeed(s);
-    if (open === 'diary' || open === 'internet') renderSheet();
+    if (open === 'diary' || open === 'internet' || open === 'asks') renderSheet();
     else if (open === 'gallery' && !viewing) void renderGallery(s, false);
   }
 
@@ -858,6 +1171,9 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     },
     post(p) {
       showToast(`Khina posted: “${p.text.length > 70 ? `${p.text.slice(0, 67)}...` : p.text}”`, 'read', () => openSheet('internet', { tab: 'posts' }));
+    },
+    ask() {
+      showToast('Khina asked the Keeper for something', 'read', () => openSheet('asks'));
     },
     setMode(m) {
       mode = m;

@@ -82,6 +82,32 @@ export interface Post {
   sent?: Record<string, string>;
 }
 
+/** How the Keeper (the human who looks after the village) answered one of Khina's asks. */
+export type AskAnswer = 'done' | 'notnow' | 'no';
+export const ASK_ANSWERS: AskAnswer[] = ['done', 'notnow', 'no'];
+
+/**
+ * Something Khina asked the Keeper for at night: a thing only a human can do (an account, a new place
+ * or tool in the village). Public on the site; only the Keeper can answer (src/asks.ts).
+ */
+export interface Ask {
+  /** Short random id, used in the answer's address (POST /asks/<id>). */
+  id: string;
+  /** Game minute it was asked. */
+  t: number;
+  /** Real time it was asked (epoch ms): asks are paced by the real clock, not Khina's. */
+  at: number;
+  /** What she asks for, one sentence, first person. */
+  text: string;
+  /** Why, one short sentence, first person. */
+  why: string;
+  status: 'open' | AskAnswer;
+  /** Real time it was answered (epoch ms). */
+  answeredAt?: number;
+  /** The Keeper's own words with the answer (at most 300 characters). */
+  note?: string;
+}
+
 export type WorkResult =
   | { kind: 'piece'; piece: PieceRef }
   | { kind: 'post'; post: Post }
@@ -207,6 +233,8 @@ export interface State {
   readings: Reading[];
   /** Short posts Khina wrote for the internet (live server only). */
   posts?: Post[];
+  /** What she asked the Keeper for, oldest first (live server only; missing on older saves). */
+  asks?: Ask[];
   world: WorldState;
   personality: Personality;
   rngState: number;

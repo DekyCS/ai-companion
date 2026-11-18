@@ -1,7 +1,7 @@
 // ?mock: made-up pieces, readings and night pages, so the HUD can be checked without the model.
 // Loaded only when the page is opened with ?mock.
 
-import type { HudSnap, PieceFull, PieceRef, PieceSource, Reading } from './hud.ts';
+import type { Ask, HudSnap, PieceFull, PieceRef, PieceSource, Reading } from './hud.ts';
 
 const PICTURE = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><rect width="400" height="300" fill="#7a5a3f"/><path d="M0 230 Q100 210 200 228 T400 222 V300 H0Z" fill="#4a3526"/><path d="M60 228 C70 170 90 120 120 100 C150 120 170 170 178 228" fill="none" stroke="#1f1610" stroke-width="5" stroke-linecap="round"/><path d="M120 100 C100 70 130 40 160 60 C190 40 230 70 205 100 C240 110 225 150 190 140 C170 160 130 150 120 100Z" fill="#2a1f17" opacity="0.8"/><circle cx="300" cy="70" r="26" fill="none" stroke="#1f1610" stroke-width="3" stroke-dasharray="6 5"/><path d="M250 240 q10 -14 22 0 q10 -14 22 0" fill="none" stroke="#1f1610" stroke-width="3"/></svg>`;
 
@@ -56,5 +56,25 @@ export function mockSnap<T extends HudSnap>(s: T): T {
     pages: [
       { day: Math.max(1, s.day - 1), text: 'The lantern still does not light. I fiddled with it twice and said so to the bench. Bramwell gave me crusts, which helped more than the lantern did.' },
     ],
+    asks: mockAsks(s),
   };
+}
+
+/** Two asks waiting for the Keeper and two answered, newest first, as the server sends them. */
+function mockAsks(s: HudSnap): Ask[] {
+  const now = Date.now();
+  const hour = 3_600_000;
+  const when = (minutesAgo: number) => {
+    const t = Math.max(0, s.t - minutesAgo);
+    const day = Math.floor(t / 1440) + 1;
+    const m = t % 1440;
+    const wd = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][(day - 1) % 7];
+    return { t, day, clock: `${wd} ${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}` };
+  };
+  return [
+    { id: 'mock4', ...when(200), at: now - 2 * hour, text: 'Could the stream have a few stepping stones by the dam?', why: 'I keep getting my paws wet halfway across.', status: 'open' },
+    { id: 'mock3', ...when(900), at: now - 14 * hour, text: 'Could I have a place on the site where visitors can leave me a note?', why: 'The letterbox only ever has Tansy and the squirrels in it.', status: 'open' },
+    { id: 'mock2', ...when(1700), at: now - 27 * hour, text: 'Could I have a little boat for the stream?', why: 'I would like to see where the water goes.', status: 'no', answeredAt: now - 20 * hour, note: 'Not a boat, deep water is no place for a bunny. Ask me for a bridge instead.' },
+    { id: 'mock1', ...when(2600), at: now - 40 * hour, text: 'Could I have an account somewhere, so strangers can read my posts?', why: 'Right now my posts only stay on the computer in the hut.', status: 'done', answeredAt: now - 30 * hour, note: 'Made you one on Bluesky. Your posts go there now.' },
+  ];
 }

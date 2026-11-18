@@ -9,11 +9,14 @@
 // Khina still sleeps at Khina's night either way. --persist saves Khina's life every few minutes and on shutdown, and picks it up on
 // start, catching up on the time missed. Hosting (Railway) sets PORT; then it listens on all
 // interfaces. See Dockerfile.
+// Khina's asks to the Keeper are in the snapshot for anyone to read; POST /asks/<id> answers one,
+// only with the header x-keeper-key equal to KHINA_KEEPER_KEY (at least 24 characters; src/asks.ts).
+// POST /asks/check says whether a key is good, so the page can tell before the Keeper types a note.
 
 import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { readFile } from 'node:fs/promises';
-import { createServer, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { stripTypeScriptTypes } from 'node:module';
 import { dirname, extname, join, normalize, sep } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -25,7 +28,8 @@ import { Sim } from './sim.ts';
 import { PieceStore } from './pieces.ts';
 import { TOY_CSP } from './mind/making.ts';
 import { makeOutlets, sendEverywhere } from './outlets.ts';
-import { newState, type Completed, type PieceRef, type Post, type Reading, type State } from './state.ts';
+import { newState, type Ask, type Completed, type PieceRef, type Post, type Reading, type State } from './state.ts';
+import { ASK, answerRequest, asksForSite, checkRequest, keeperGate, newGuard, serverKey } from './asks.ts';
 import { clock, dayOf, isDark, partOfDay, weekday } from './time.ts';
 import { actionDef } from './world/actions.ts';
 import { PLACES } from './world/places.ts';
@@ -119,9 +123,11 @@ const sim = new Sim(s, {
   outDir,
   speedMs: 1000 / speed,
   pieces: store,
+  asks: true,
   onLine: values.quiet ? undefined : (line) => console.log(line),
   onEvent: (e) => {
     if (e.type === 'tick') return;
+    if (e.type === 'ask') broadcast('ask', { ask: askWithClock(e.ask as Ask) });
     if (e.type === 'post') {
       const post = e.post as Post;
       broadcast('post', { post: withClock(post) });
@@ -140,6 +146,9 @@ const sim = new Sim(s, {
 
 function withClock<T extends { t: number }>(x: T): T & { clock: string } {
   return { ...x, clock: `${weekday(x.t).slice(0, 3)} ${clock(x.t)}` };
+}
+function askWithClock(a: Ask) {
+  return { ...withClock(a), day: dayOf(a.t) };
 }
 if (saved) sim.log.push(...saved.log);
 
@@ -211,6 +220,8 @@ function snapshot() {
     postsTo: outlets.map((o) => o.name),
     // Nights she wrote nothing (code alone, or a page turned away) leave no blank page on the site.
     pages: s.pages.filter((p) => p.text.trim()).slice(-5).map((p) => ({ day: p.day, text: p.text })),
+    // What she asked the Keeper for, newest first: anyone may read them, only the Keeper can answer.
+    asks: asksForSite(s).map(askWithClock),
     moodArc: sim.hours.slice(-48).map((h) => ({ t: h.t, mood: h.mood })),
   };
 }
@@ -252,6 +263,79 @@ function resolvePath(url: string): string | null {
   return ALLOWED.some((a) => rel === a || rel.startsWith(a + sep)) ? join(ROOT, rel) : null;
 }
 
+// ---------- the Keeper answers an ask ----------
+/** The request body; 'big' as soon as it passes `max` bytes (the rest is not read), 'error' if it broke off. */
+function readBody(req: IncomingMessage, max: number): Promise<string | 'big' | 'error'> {
+  return new Promise((resolve) => {
+    const parts: Buffer[] = [];
+    let size = 0;
+    req.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size <= max) parts.push(c);
+      else {
+        req.removeAllListeners('data');
+        req.pause();
+        resolve('big');
+      }
+    });
+    req.on('end', () => resolve(Buffer.concat(parts).toString('utf8')));
+    req.on('error', () => resolve('error'));
+  });
+}
+
+const sendJson = (res: ServerResponse, status: number, body: unknown) =>
+  res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify(body));
+
+/** Wrong keys lately, for every request together (src/asks.ts keeperGate). */
+const keyGuard = newGuard();
+const keeperLog = (line: string | undefined) => line && console.log(`${' '.repeat(10)}${line}`);
+
+/**
+ * POST /asks/<id> {status, note?} with the Keeper's key. The answer goes into her letterbox as a letter.
+ * POST /asks/check only tries the key.
+ */
+async function handleAnswer(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
+  if (req.method !== 'POST') {
+    res.writeHead(405, { allow: 'POST' }).end('POST only');
+    return;
+  }
+  const header = req.headers['x-keeper-key'];
+  const key = typeof header === 'string' ? header : undefined;
+  const envKey = process.env.KHINA_KEEPER_KEY;
+  if (id === 'check') {
+    req.resume();
+    const c = checkRequest(keyGuard, key, envKey, Date.now());
+    keeperLog(c.log);
+    if (c.status === 204) res.writeHead(204, { 'cache-control': 'no-store' }).end();
+    else sendJson(res, c.status, c.body);
+    return;
+  }
+  // Strangers get nothing read and nothing changed.
+  const denied = keeperGate(keyGuard, key, envKey, Date.now());
+  if (denied) {
+    req.resume();
+    keeperLog(denied.log);
+    sendJson(res, denied.status, denied.body);
+    return;
+  }
+  const body = await readBody(req, ASK.bodyMax);
+  if (body === 'big' || body === 'error') {
+    // Stop here: the rest of an oversized body is never read, and the connection is closed after the answer.
+    res.on('finish', () => req.destroy());
+    res.writeHead(body === 'big' ? 413 : 400, { 'content-type': 'application/json', 'cache-control': 'no-store', connection: 'close' });
+    res.end(JSON.stringify({ error: body === 'big' ? 'Too long.' : 'Could not read that.' }));
+    return;
+  }
+  const r = answerRequest(s, { id, key, envKey, body, now: Date.now(), guard: keyGuard });
+  if (r.status === 200) {
+    const ask = r.body.ask as Ask;
+    console.log(`${' '.repeat(10)}✉ the Keeper answered "${ask.text}": ${ask.status}${ask.note ? ` (${ask.note})` : ''}`);
+    save();
+    broadcast('snap', { snap: snapshot(), event: { type: 'answered', id: ask.id } });
+  }
+  sendJson(res, r.status, r.status === 200 ? { ok: true, ask: askWithClock(r.body.ask as Ask) } : r.body);
+}
+
 const startedAt = Date.now();
 const server = createServer(async (req, res) => {
   const url = req.url ?? '/';
@@ -273,6 +357,10 @@ const server = createServer(async (req, res) => {
     const hours = (Date.now() - startedAt) / 3_600_000;
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
     res.end(JSON.stringify({ hours: +hours.toFixed(2), khinaDays: +((hours * rate) / 24).toFixed(2), usd: +st.costUsd.toFixed(4), calls: st.calls, failures: st.failures, byJob: st.byJob ?? {}, today: mind.budgetToday?.() ?? null }));
+    return;
+  }
+  if (url.startsWith('/asks/')) {
+    await handleAnswer(req, res, url.slice('/asks/'.length).split('?')[0] ?? '');
     return;
   }
   if (url === '/pieces') {
@@ -326,6 +414,14 @@ const server = createServer(async (req, res) => {
 server.listen(port, host, () => {
   const pace = realClock ? (rate === 1 ? 'real time, on the wall clock' : `${rate}× real time (a Khina day every ${+(24 / rate).toFixed(2)} h)`) : `${speed} game minute${speed === 1 ? '' : 's'} per second`;
   if (outlets.length) console.log(`Posts also go to: ${outlets.map((o) => o.name).join(', ')}`);
+  const keeperEnv = process.env.KHINA_KEEPER_KEY?.trim();
+  console.log(
+    serverKey(keeperEnv)
+      ? "The Keeper can answer Khina's asks on the site (open it with #keeper)."
+      : keeperEnv
+        ? `KHINA_KEEPER_KEY is too short: answering is off (use at least ${ASK.keyMin} random characters).`
+        : "KHINA_KEEPER_KEY is not set: Khina's asks can be read but not answered.",
+  );
   console.log(`Khina · seed ${seed} · brain: ${mind.kind === 'model' ? 'Claude' : 'code only'} · ${pace}${saved ? ' · picked up from the last save' : ''}`);
   console.log(`Open http://${host === '0.0.0.0' ? 'localhost' : host}:${port}  (events: ${outDir}/events.jsonl)\n`);
 });

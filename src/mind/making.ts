@@ -312,8 +312,9 @@ export const POST_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-/** Words a gentle bunny's post never needs: scams and selling are what bot accounts get pulled into. */
-const POST_NEVER = /\b(crypto|token|coin|nft|airdrop|wallet|giveaway|donat\w*|buy|sell|price|follow me|dm me|link in bio|subscribe)\b/i;
+/** Words a gentle bunny's post never needs: scams and selling are what bot accounts get pulled into.
+ * Her asks to the Keeper are held to it too (src/asks.ts). */
+export const POST_NEVER = /\b(crypto|token|coin|nft|airdrop|wallet|giveaway|donat\w*|buy|sell|price|follow me|dm me|link in bio|subscribe)\b/i;
 
 /** A post safe to show strangers: no links, mentions or hashtags, short, and nothing that sells. */
 export function cleanPost(raw: unknown): string | null {
