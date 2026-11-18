@@ -224,7 +224,11 @@ export function updatePresence(w: WorldState, t: number, rng: Rng): void {
   const h = hourOf(t);
   const wet = isWet(w.weather);
   const present: Partial<Record<PlaceId, VillagerId[]>> = {};
-  const add = (p: PlaceId, v: VillagerId) => (present[p] ??= []).push(v);
+  // One place at a time: the dice still roll (seeds replay the same), but someone already out is not out twice.
+  const add = (p: PlaceId, v: VillagerId) => {
+    if (Object.values(present).some((who) => who?.includes(v))) return;
+    (present[p] ??= []).push(v);
+  };
 
   if (bakeryOpen(t)) {
     add('bakery', 'bramwell');
