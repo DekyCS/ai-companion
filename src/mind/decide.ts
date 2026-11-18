@@ -57,6 +57,8 @@ export interface Mind {
   browse?(s: State, question: string, onMind: string): Promise<Reading | string>;
   /** Can Khina post right now (model up, today's few posts not used yet)? */
   canPost?(): boolean;
+  /** Today's real spend against the caps (live server's /spend). */
+  budgetToday?(): { spent: number; cap: number; extras: number; extrasAllowedNow: number; extrasCap: number; posts: number };
   /** Writes a short public post; returns it checked, or why not. */
   writePost?(s: State, about: string, recentLines: string[], latest: PieceRef | undefined, hoursAgo: number | null): Promise<{ text: string; sharePiece: boolean } | string>;
   stats(): MindStats;

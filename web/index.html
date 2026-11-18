@@ -38,7 +38,8 @@
       .soft { color: var(--soft); }
 
       /* Needs strip, top centre */
-      #needs { top: 16px; left: max(352px, calc(50vw - 300px)); width: min(600px, calc(100vw - 752px)); padding: 9px 14px 10px; display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px 8px; }
+      /* Between the "right now" card and the top-right controls (clock, walk, sound, menu: about 500px). */
+      #needs { top: 16px; left: max(352px, calc(50vw - 300px)); width: min(600px, calc(100vw - 512px - max(352px, 50vw - 300px))); padding: 9px 14px 10px; display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px 8px; }
       .need { min-width: 0; }
       .need .nl { display: flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .need .nd { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid var(--line); flex: none; }
@@ -72,6 +73,7 @@
       #clockText small { font-size: 10px; font-weight: 800; opacity: 0.6; letter-spacing: 0.02em; }
       #modeBtn { position: static; height: 44px; padding: 0 16px; font-weight: 800; font-size: 14px; background: var(--orange); cursor: pointer; }
       #modeBtn:hover, .round:hover { filter: brightness(1.04); transform: translateY(-1px); }
+      #soundBtn[aria-pressed='true'] { background: var(--orange); }
       #menu { position: fixed; top: 72px; right: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
       #menu button { display: flex; align-items: center; gap: 10px; background: none; border: 0; padding: 0; cursor: pointer; font-weight: 800; font-size: 15px; color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55); }
       #menu button .round { color: var(--ink); text-shadow: none; }
@@ -146,7 +148,7 @@
       #toast .tt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
       /* Medium screens: needs strip moves under the top-right controls. */
-      @media (max-width: 1180px) {
+      @media (max-width: 1320px) {
         #needs { top: 72px; left: auto; right: 16px; width: min(560px, calc(100vw - 368px)); }
         #menu { top: 160px; }
         #feed { width: 320px; }
@@ -162,7 +164,7 @@
         #why { font-size: 13px; }
         #topRight { top: 70px; right: 10px; flex-direction: column; align-items: flex-end; }
         #clockPill { display: none; }
-        #menuBtn { width: 44px; height: 44px; }
+        #menuBtn, #soundBtn { width: 44px; height: 44px; }
         #menu { top: 124px; right: 10px; }
         #feed { left: 10px; right: 10px; width: auto; bottom: 64px; }
         #feed .bubble:not(:last-child) { display: none; }
@@ -201,6 +203,7 @@
       <div id="topRight">
         <div id="clockPill" class="pill"><span id="clockIcon"></span><span id="clockText"></span></div>
         <button id="modeBtn" class="pill">Walk around</button>
+        <button id="soundBtn" class="round" aria-label="Sound off" aria-pressed="false" hidden></button>
         <button id="menuBtn" class="round" aria-label="Menu" aria-expanded="false"></button>
       </div>
       <nav id="menu" hidden>

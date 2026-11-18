@@ -17,7 +17,9 @@ to the spot for each action. Drag to look around; "Follow Khina" keeps the camer
 
 Walk around yourself as a little felt bunny: **WASD** or the arrow keys (relative to the camera),
 **Shift** to run, **Space** to hop. The first key press hands you the camera; "Follow Khina" gives it back.
-Khina looks up at you when you come close.
+Khina looks up at you when you come close. The villagers stand where the sim says they are, the little
+train stops at the halt on its timetable, and the speaker button turns on the sound (wind, rain, the stream,
+birds by day, crickets at night). The camera moves in front of trees and roofs that would hide Khina.
 
 Debug views: `?pose=curl&dist=3` (or walk, sniff, work, eat, sit, paddle) holds a pose; `?hour=19.5`
 and `?weather=rain` fix the light; `?clean` hides the panels; `?lite` is lighter for slow machines.
@@ -46,7 +48,7 @@ On `npm run live`, Khina can also:
 
 - post a few short notes a day at the internet hut (`KHINA_POSTS_PER_DAY`, default 3), shown under Internet → posts.
 
-These need `--model`. Pieces and lookups stay within `KHINA_EXTRAS_CAP_USD` (default $0.30 a day, inside the daily cap),
+These need `--model`. Pieces and lookups stay within `KHINA_EXTRAS_CAP_USD` (default $0.30 a day, $0.50 on the live server; inside the daily cap),
 let out evenly through the day so a fast clock can't spend it all after midnight. `/spend` shows what Claude has cost per job.
 
 ### Giving Khina an account

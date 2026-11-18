@@ -28,7 +28,7 @@ import { newState, type Completed, type PieceRef, type Post, type Reading, type 
 import { clock, dayOf, isDark, partOfDay, weekday } from './time.ts';
 import { actionDef } from './world/actions.ts';
 import { PLACES } from './world/places.ts';
-import { bakeryOpen } from './world/village.ts';
+import { TRAINS, bakeryOpen } from './world/village.ts';
 
 const { values } = parseArgs({
   options: {
@@ -189,6 +189,8 @@ function snapshot() {
     letters: s.world.letters.length,
     // Who is where this hour, so the page can show the villagers.
     present: s.world.present,
+    // The timetable (minutes of the day the train stops at the halt), so the page can run the train.
+    trains: TRAINS,
     diary: sim.log
       .filter((r) => r.diary)
       .slice(-40)
@@ -259,7 +261,7 @@ const server = createServer(async (req, res) => {
     const st = mind.stats();
     const hours = (Date.now() - startedAt) / 3_600_000;
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
-    res.end(JSON.stringify({ hours: +hours.toFixed(2), khinaDays: +(hours * rate).toFixed(2), usd: +st.costUsd.toFixed(4), calls: st.calls, failures: st.failures, byJob: st.byJob ?? {} }));
+    res.end(JSON.stringify({ hours: +hours.toFixed(2), khinaDays: +((hours * rate) / 24).toFixed(2), usd: +st.costUsd.toFixed(4), calls: st.calls, failures: st.failures, byJob: st.byJob ?? {}, today: mind.budgetToday?.() ?? null }));
     return;
   }
   if (url === '/pieces') {

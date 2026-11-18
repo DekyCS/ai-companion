@@ -227,7 +227,7 @@ export function checkPiece(json: unknown, req: PieceRequest): PieceDraft | strin
 
 // ---------- The internet hut ----------
 
-export const webSystem = (s?: State) => `You run the old computer in the internet hut for Khina, a small hedgehog who lives in a forest village. Khina has come to look something up. Search the web (once or twice is plenty) and tell Khina what you found.
+export const webSystem = (s?: State) => `You run the old computer in the internet hut for Khina, a small hedgehog who lives in a forest village. Khina has come to look something up. Search the web once and tell Khina what you found.
 
 Reply with JSON:
 - question: what Khina looked up, as Khina would put it, under 12 words.

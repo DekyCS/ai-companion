@@ -14,7 +14,7 @@
     "long": "node --env-file-if-exists=.env src/long.ts",
     "copies": "node --env-file-if-exists=.env src/copies.ts",
     "layout": "node src/layout-json.ts",
-    "art": "node src/layout-json.ts && /Applications/Blender.app/Contents/MacOS/Blender --background --python art/khina.py && /Applications/Blender.app/Contents/MacOS/Blender --background --python art/village.py && /Applications/Blender.app/Contents/MacOS/Blender --background --python art/visitor.py && /Applications/Blender.app/Contents/MacOS/Blender --background --python art/villagers.py",
+    "art": "node src/layout-json.ts && /Applications/Blender.app/Contents/MacOS/Blender --background --python art/khina.py && /Applications/Blender.app/Contents/MacOS/Blender --background --python art/village.py && /Applications/Blender.app/Contents/MacOS/Blender --background --python art/visitor.py && /Applications/Blender.app/Contents/MacOS/Blender --background --python art/villagers.py && /Applications/Blender.app/Contents/MacOS/Blender --background --python art/train.py",
     "live": "node --env-file-if-exists=.env src/live.ts"
   },
   "dependencies": {

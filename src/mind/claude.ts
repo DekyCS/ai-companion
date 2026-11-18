@@ -192,6 +192,18 @@ export class ClaudeMind implements Mind {
     return checkPiece(out.json, req);
   }
 
+  budgetToday(now = new Date()) {
+    const r = (x: number) => +x.toFixed(4);
+    return {
+      spent: r(this.ledger.spentToday()),
+      cap: this.dailyCap,
+      extras: r(this.ledger.extrasToday()),
+      extrasAllowedNow: r(extrasAllowance(this.extrasCap, now)),
+      extrasCap: this.extrasCap,
+      posts: this.ledger.countToday('posts'),
+    };
+  }
+
   /** A few short public posts a day, while the model is up. */
   canPost(now = new Date()): boolean {
     // Spread through the day like the extras budget: one at midnight, the rest every few hours.
@@ -215,7 +227,7 @@ export class ClaudeMind implements Mind {
     if (!this.canWork()) return 'no budget for the internet today';
     const out = await this.call('web', s, webSystem(s), webPrompt(question, onMind), WEB_SCHEMA, 8000, {
       extra: true,
-      tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 2 }],
+      tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 1 }],
     });
     if (!out.ok) return out.why;
     return checkReading(out.json, question, s.t);

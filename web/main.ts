@@ -4,7 +4,8 @@
 // You can walk around too, as a little felt bunny: WASD or arrows, Shift runs, Space hops.
 //
 // Debug: ?hour=19.5 fixes the light, ?weather=rain, ?pose=curl (walk, sniff, work, eat, sit,
-// paddle, stand) with ?dist=3, ?cam=x,y,z,tx,ty,tz (three.js), ?play starts as the bunny,
+// paddle, stand) with ?dist=3, ?cam=x,y,z,tx,ty,tz (three.js; add ?clear to keep it out of trees
+// like the normal camera), ?play starts as the bunny, ?train=8 brings a train in 8 s after load,
 // ?lite drops ambient occlusion and thins the grass for slow machines, ?villagers=all shows every
 // villager at their first spot whatever the sim says.
 
@@ -19,6 +20,9 @@ import { createGrass, windify } from './grass.ts';
 import { addFuzz } from './fuzz.ts';
 import { createPlayer, type Player } from './player.ts';
 import { createHud, type DiaryLine, type PieceRef, type Reading } from './hud.ts';
+import { createSound, mountSoundButton } from './sound.ts';
+import { createClearance } from './clearance.ts';
+import { createTrain } from './train.ts';
 
 // ---------- what the server sends ----------
 interface Activity {
@@ -52,6 +56,8 @@ interface Snap {
   letters: number;
   /** Who is where this hour (villager ids by place). */
   present?: Partial<Record<PlaceId, string[]>>;
+  /** Minutes of the day the train stops at the halt. */
+  trains?: number[];
   diary: DiaryLine[];
   pieces?: PieceRef[];
   readings?: Reading[];
@@ -130,12 +136,13 @@ function route(from: string, to: string): string[] {
 
 // ---------- loading ----------
 const loader = new GLTFLoader();
-const [terrain, village, khinaGltf, visitorGltf, villagersGltf] = await Promise.all([
+const [terrain, village, khinaGltf, visitorGltf, villagersGltf, trainGltf] = await Promise.all([
   loadTerrain(),
   loader.loadAsync('/art/export/village.glb'),
   loader.loadAsync('/art/export/khina.glb'),
   loader.loadAsync('/art/export/visitor.glb').catch(() => null),
   loader.loadAsync('/art/export/villagers.glb').catch(() => null),
+  loader.loadAsync('/art/export/train.glb').catch(() => null),
 ]);
 const byName = (root: THREE.Object3D, name: string) => root.getObjectByName(name) ?? root.getObjectByName(name.replace(/\./g, ''));
 const groundY = (p: THREE.Vector3) => terrain.heightAt(p.x, -p.z);
@@ -213,6 +220,32 @@ const GLASS_ON = new THREE.Color('#ffd27a');
 const flag = byName(village.scene, 'Flag.letterbox');
 
 const grass = createGrass(scene, terrain, { density: lite ? 34 : 60 });
+
+// ---------- keeping the camera out of trees, roofs and hills ----------
+const clearance = createClearance(
+  village.scene,
+  (x, z) => terrain.heightAt(x, -z),
+  (m) => /^(Ground|Water|Glow|Screen|Flag)/.test(m.name) || (m.material as THREE.Material).name.startsWith('Water'),
+);
+/** How far the camera is pulled in toward what it looks at, smoothed (0 when nothing is in the way). */
+let camPull = 0;
+
+// ---------- sound (off until the visitor turns it on) ----------
+const sound = createSound();
+if (!lite) mountSoundButton(document.getElementById('soundBtn') as HTMLButtonElement, sound);
+/** Points along the water (the stream), to know how near the camera is to it. */
+const waterPts: THREE.Vector3[] = [];
+village.scene.updateMatrixWorld(true);
+village.scene.traverse((o) => {
+  if (!(o instanceof THREE.Mesh) || !(o.material as THREE.Material).name.startsWith('Water')) return;
+  const pos = o.geometry.attributes.position!;
+  const every = Math.max(1, Math.floor(pos.count / 400));
+  for (let i = 0; i < pos.count; i += every) waterPts.push(new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld));
+});
+let streamDist = 99;
+let streamCheck = 0;
+let khinaStep = 0;
+let playerStep = 0;
 
 // ---------- Khina ----------
 const pet = new THREE.Group();
@@ -401,6 +434,7 @@ function chimney(at: [number, number, number]) {
   };
 }
 const smoke = { burrow: chimney(CHIMNEYS.burrow!), bakery: chimney(CHIMNEYS.bakery!) };
+const train = trainGltf ? createTrain(scene, trainGltf, DOT, params.has('train') ? Number(params.get('train')) : null) : null;
 
 const RAIN_N = 2400;
 const rainPos = new Float32Array(RAIN_N * 6);
@@ -782,6 +816,20 @@ function frame(dtMs: number) {
 
   updateNeighbours(dt, tau);
 
+  // Footsteps: Khina's on each footfall of the waddle, the bunny's on each hop.
+  if (sound.on) {
+    const half = Math.floor(gait / Math.PI);
+    if (moving && half !== khinaStep && pet.visible) sound.step(camera.position.distanceTo(pet.position), 0.5);
+    khinaStep = half;
+    if (player?.moving) {
+      playerStep -= dt;
+      if (playerStep <= 0) {
+        playerStep = 0.32;
+        sound.step(camera.position.distanceTo(player.object.position), 1);
+      }
+    } else playerStep = 0;
+  }
+
   // The world around.
   const s = snap;
   const lightT = forcedHour !== null ? forcedHour * 60 : now;
@@ -807,6 +855,7 @@ function frame(dtMs: number) {
     smoke.burrow.update(home && !asleep && (minuteOfDay < 9 * 60 || minuteOfDay > 17 * 60 || wet), dt, look.wind);
     if (flag) flag.rotation.x = damp(flag.rotation.x, s.letters > 0 ? 0 : -Math.PI / 2, 4, dt);
   }
+  train?.update(now, snap?.speed ?? 1, snap?.trains ?? [], dt, look.wind);
   rain.visible = wet;
   if (wet) {
     const fall = dt * 15;
@@ -858,12 +907,35 @@ function frame(dtMs: number) {
   if (camera.position.y < floor) camera.position.y = floor;
 
   look.update(lightT, weather, controls.target, dt);
+  if (sound.on) {
+    streamCheck -= dt;
+    if (streamCheck <= 0 && waterPts.length) {
+      streamCheck = 0.25;
+      streamDist = Math.min(...waterPts.map((p) => p.distanceTo(camera.position)));
+    }
+    sound.update({ dt, daylight: look.daylight, weather, wind: look.wind, streamDist });
+  }
   windUniforms.uTime.value = look.time;
   windUniforms.uWind.value = look.wind;
   waterUniforms.uTime.value = look.time;
   grass.update(controls.target, look.time, look.wind);
   controls.update();
+  // Nothing between the camera and what it follows: if a trunk, canopy, roof or hill is in the
+  // way, draw from just in front of it. Only for this frame's picture, so the orbit keeps the
+  // distance the viewer chose and the camera eases back out once the way is clear.
+  const orbitPos = camera.position.clone();
+  if (!camParam || params.has('clear')) {
+    const full = orbitPos.distanceTo(controls.target);
+    const want = Math.max(0, full - clearance.clearDist(controls.target, orbitPos));
+    camPull = damp(camPull, want, want > camPull ? 14 : 2.5, dt);
+    if (camPull > 0.01) {
+      camera.position.lerpVectors(controls.target, orbitPos, Math.max(0.05, (full - camPull) / full));
+      const ground = terrain.heightAt(camera.position.x, -camera.position.z) + 0.35;
+      if (camera.position.y < ground) camera.position.y = ground;
+    }
+  }
   look.render();
+  camera.position.copy(orbitPos);
 }
 
 let last = performance.now();
