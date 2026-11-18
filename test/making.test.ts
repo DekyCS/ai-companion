@@ -3,7 +3,9 @@ import { test } from 'node:test';
 import { extrasAllowance } from '../src/mind/claude.ts';
 import { ownChoice } from '../src/mind/decide.ts';
 import { checkPiece, checkReading, cleanHtml, cleanNotes, cleanSvg, formFor, pieceRequest } from '../src/mind/making.ts';
+import { diaryPrompt, STALE_NOTE } from '../src/mind/prompts.ts';
 import { Rng } from '../src/rng.ts';
+import { sameQuestion } from '../src/sim.ts';
 import { newState } from '../src/state.ts';
 
 const shapes = '<rect x="0" y="0" width="400" height="300" fill="#a87"/><circle cx="50" cy="50" r="20"/><path d="M0 0L10 10"/>';
@@ -77,4 +79,17 @@ test('the extras budget is let out through the day, not spent by 2 a.m.', () => 
   assert.ok(extrasAllowance(0.3, at(0)) > 0.015 && extrasAllowance(0.3, at(0)) < 0.025);
   assert.ok(Math.abs(extrasAllowance(0.3, at(12)) - 0.16875) < 1e-9);
   assert.equal(extrasAllowance(0.3, at(23)), 0.3);
+});
+
+test('the same question asked twice is recognised', () => {
+  assert.ok(sameQuestion('How far do hedgehogs walk at night to find snails?', 'how far do hedgehogs walk at night to find snails'));
+  assert.ok(!sameQuestion('Why do herons stand still?', 'Why do herons fly?'));
+  assert.ok(!sameQuestion('?', '!'));
+});
+
+test('the diary is not told "it did less for Khina than it used to" every time', () => {
+  const s = newState(1);
+  const rec = { actionId: 'tidy', place: 'burrow', start: 601, end: 640, outcome: `tidied the burrow${STALE_NOTE}`, reason: 'messy', moodBefore: 60, moodAfter: 60 } as unknown as Parameters<typeof diaryPrompt>[1];
+  assert.doesNotMatch(diaryPrompt(s, rec, []), /did less for Khina/);
+  assert.match(diaryPrompt(s, { ...rec, start: 600 }, []), /wearing a little thin/);
 });

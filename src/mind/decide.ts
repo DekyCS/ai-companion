@@ -35,6 +35,8 @@ export interface MindStats {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
+  /** Calls and dollars per job (decide, diary, sleep, make, web) since the process started. */
+  byJob?: Record<string, { calls: number; usd: number }>;
 }
 
 /** Whatever proposes candidates and writes diary lines: the Claude API, or nothing. */

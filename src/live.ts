@@ -222,6 +222,7 @@ function resolvePath(url: string): string | null {
   return ALLOWED.some((a) => rel === a || rel.startsWith(a + sep)) ? join(ROOT, rel) : null;
 }
 
+const startedAt = Date.now();
 const server = createServer(async (req, res) => {
   const url = req.url ?? '/';
   if (url === '/events') {
@@ -234,6 +235,14 @@ const server = createServer(async (req, res) => {
   if (url === '/state') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify(snapshot()));
+    return;
+  }
+  if (url === '/spend') {
+    // What Claude has cost since this process started, per job: how the daily cap is being used.
+    const st = mind.stats();
+    const hours = (Date.now() - startedAt) / 3_600_000;
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
+    res.end(JSON.stringify({ hours: +hours.toFixed(2), khinaDays: +(hours * rate).toFixed(2), usd: +st.costUsd.toFixed(4), calls: st.calls, failures: st.failures, byJob: st.byJob ?? {} }));
     return;
   }
   if (url === '/pieces') {

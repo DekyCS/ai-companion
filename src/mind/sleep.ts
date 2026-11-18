@@ -11,6 +11,7 @@ import { moodWord } from '../body.ts';
 import type { Mind } from './decide.ts';
 import { computeBeliefs, keyLabel } from './habit.ts';
 import { forget, promote, promotionCandidates } from './memory.ts';
+import { STALE_NOTE } from './prompts.ts';
 
 export interface ReflectInput {
   day: number;
@@ -40,7 +41,7 @@ export function dayLog(records: Completed[]): string {
     .map((r) => {
       const felt = r.felt === undefined ? '' : r.felt > 1.5 ? ' (felt better after)' : r.felt < -1.5 ? ' (felt worse after)' : '';
       const stale = r.stale !== undefined && r.stale < 0.6 ? ' (done a lot lately)' : '';
-      return `- ${clock(r.start)} ${PLACES[r.place].at}: ${r.outcome}${felt}${stale}`;
+      return `- ${clock(r.start)} ${PLACES[r.place].at}: ${r.outcome.replace(STALE_NOTE, '')}${felt}${stale}`;
     })
     .join('\n');
 }

@@ -71,7 +71,7 @@ export interface Reading {
 
 export type WorkResult =
   | { kind: 'piece'; piece: PieceRef }
-  | { kind: 'web'; reading: Reading }
+  | { kind: 'web'; reading: Reading; again?: boolean }
   | { kind: 'none'; why: string };
 
 /** One finished (or refused) action, as the village's records saw it. */

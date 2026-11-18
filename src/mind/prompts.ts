@@ -71,7 +71,7 @@ Rules:
 - Do not say how many minutes something took.
 - Plain, short words. No exclamation marks, no emojis. Never use the words cozy, cosy, adventure, journey, magical, delightful or whimsical.
 - No lessons, no morals, no hopes about tomorrow.
-- Start differently from the recent lines you are shown, and do not reuse their phrases.
+- Start differently from the recent lines you are shown, and do not reuse their phrases. Never write "did less for me than it used to".
 
 ${characterSheet(s)}`;
 
@@ -245,12 +245,16 @@ export function diaryPrompt(s: State, rec: Completed, recentLines: string[], sen
   // Only a thwarted plan gets "meant to"; otherwise the model invents a contrast that did not happen.
   if (rec.kind === 'refused') lines.push(`What Khina set out to do: ${def.label}${rec.detail ? ` (${rec.detail})` : ''}.`);
   lines.push(
-    `What happened: ${sentence(rec.outcome)}`,
+    `What happened: ${sentence(rec.outcome.replace(STALE_NOTE, ''))}`,
     `Why Khina chose it: ${rec.reason}`,
     `Mood (let it colour the wording, do not name it): ${after}${before !== after ? `, was ${before} before` : ''}.`,
     `Senses: ${SENSE_ASK[sense]}`,
   );
   if (who.length) lines.push(`Also there: ${names(who)}.`);
+  // Said every line, "it did less for me than it used to" became Khina's catchphrase: hint at it now and then.
+  if (rec.outcome.includes(STALE_NOTE) && Math.floor(rec.start) % 3 === 0) {
+    lines.push('Also: Khina has done this a lot lately and it is wearing a little thin. Hint at that in your own fresh words, or leave it out.');
+  }
   if (recentLines.length) lines.push('', 'Recent diary lines (start differently from these):', ...recentLines.map((l) => `- ${l}`));
   lines.push('', 'Write the diary line.');
   return lines.join('\n');

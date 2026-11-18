@@ -207,7 +207,10 @@ export class Sim {
     const s = this.s;
     if (this.pieces) {
       const modelUp = this.mind.kind === 'model' && this.mind.unavailable() === null;
-      s.world.can = { make: true, own: modelUp, net: modelUp && !!this.mind.canWork?.() };
+      // Making and the internet only while there is budget for the real thing, so the diary never
+      // says Khina made something that is not in the Gallery.
+      const work = modelUp && !!this.mind.canWork?.();
+      s.world.can = { make: work, own: modelUp, net: work };
     }
     const d = await decide(s, this.rng, this.mind, ++this.decisionCount);
     this.decisions.push(d);
@@ -274,8 +277,15 @@ export class Sim {
   private startWork(def: ActionDef, act: Activity): void {
     const m = this.mind;
     const store = this.pieces;
-    if (!def.work || !store || !m.canWork?.()) return;
+    if (!def.work || !store) return;
     const s = this.s;
+    // Asking the same thing twice: Khina remembers the answer, and no search is paid for.
+    const before = def.work === 'web' ? s.readings.findLast((r) => sameQuestion(r.question, act.detail)) : undefined;
+    if (before) {
+      this.jobs.set(act.decisionId, Promise.resolve({ kind: 'web', reading: before, again: true }));
+      return;
+    }
+    if (!m.canWork?.()) return;
     const mindLine = onMind(s, 1, false)[0] ?? '';
     let job: Promise<WorkResult> | null = null;
     if (def.work === 'piece' && m.makePiece) {
@@ -305,6 +315,8 @@ export class Sim {
       if (s.pieces.length > 200) s.pieces.splice(0, s.pieces.length - 200);
       this.event({ type: 'piece', piece: r.piece });
       this.onLine(`${' '.repeat(10)}✎ made ${r.piece.form === 'toy' ? 'a little game' : `a ${r.piece.form}`}: "${r.piece.title}"`);
+    } else if (r.kind === 'web' && r.again) {
+      this.onLine(`${' '.repeat(10)}⌕ asked again "${r.reading.question}" (remembered, no search)`);
     } else if (r.kind === 'web') {
       s.readings.push(r.reading);
       if (s.readings.length > 60) s.readings.splice(0, s.readings.length - 60);
@@ -410,4 +422,10 @@ function pad(s: string, n: number): string {
 /** How much the needs are pulling mood down (or up) right now. */
 function needMood(s: State): number {
   return needThoughts(s).reduce((a, t) => a + t.value, 0);
+}
+
+/** The same question in other punctuation or case. */
+export function sameQuestion(a: string, b: string): boolean {
+  const norm = (q: string) => q.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return norm(a) !== '' && norm(a) === norm(b);
 }

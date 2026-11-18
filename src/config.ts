@@ -212,7 +212,8 @@ export const models = {
   diary: 'claude-haiku-5-5',
   make: 'claude-sonnet-5-5',
   web: 'claude-sonnet-5-5',
-  sleep: 'claude-opus-5-5',
+  // The night page. At a fast clock (24 pages a real day) the live server sets KHINA_NIGHT_MODEL to Sonnet.
+  sleep: (process.env.KHINA_NIGHT_MODEL ?? 'claude-opus-5-5') as 'claude-opus-5-5' | 'claude-sonnet-5-5' | 'claude-haiku-5-5',
 } as const;
 
 export const effort = { decide: 'low', diary: 'low', make: 'medium', web: 'low', sleep: 'medium' } as const;

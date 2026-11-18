@@ -874,6 +874,12 @@ export const ACTIONS: ActionDef[] = [
     work: 'web',
     outcome: (_c, act) => {
       const r = act.result;
+      if (r?.kind === 'web' && r.again)
+        return {
+          text: `went to look up "${r.reading.question}" again, then remembered the answer from last time: ${r.reading.learned.replace(/^[A-Z]/, (c) => c.toLowerCase())}`,
+          extra: { novelty: -20 },
+          thought: { key: 'asked-again', text: `I already knew about "${r.reading.question}"; I should ask the computer something new`, value: -1, hours: 24 },
+        };
       if (r?.kind === 'web')
         return {
           text: `looked up "${r.reading.question}" on the internet and found out that ${r.reading.learned.replace(/^[A-Z]/, (c) => c.toLowerCase())}`,

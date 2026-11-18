@@ -159,7 +159,7 @@ export class ClaudeMind implements Mind {
   }
 
   stats(): MindStats {
-    return { ...this.s };
+    return { ...this.s, byJob: structuredClone(this.s.byJob ?? {}) };
   }
 
   /**
@@ -265,7 +265,7 @@ export class ClaudeMind implements Mind {
         });
         const c = costOf(model, res.usage);
         cost += c;
-        this.record(c, res.usage, o.extra);
+        this.record(c, res.usage, o.extra, job);
         if (res.stop_reason !== 'pause_turn') break;
         messages.push({ role: 'assistant', content: res.content });
       }
@@ -299,8 +299,11 @@ export class ClaudeMind implements Mind {
     }
   }
 
-  private record(cost: number, u: Usage, extra = false): void {
+  private record(cost: number, u: Usage, extra = false, job = '?'): void {
     this.s.calls += 1;
+    const j = ((this.s.byJob ??= {})[job] ??= { calls: 0, usd: 0 });
+    j.calls += 1;
+    j.usd += cost;
     this.s.costUsd += cost;
     this.s.inputTokens += u.input_tokens + (u.cache_creation_input_tokens ?? 0);
     this.s.outputTokens += u.output_tokens;
