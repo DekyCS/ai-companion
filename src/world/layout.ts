@@ -103,6 +103,23 @@ export const SPOTS: Record<string, Spot> = {
   nethut_idle: { at: [18.95, -11.05], face: [18.95, -13], pose: 'stand' },
 };
 
+/**
+ * Where each villager stands when the sim says they are at a place (s.world.present), and what they
+ * face. Off Khina's own spots and the paths, so Khina never walks through them. Villagers are only
+ * ever at the bakery, the vegetable patch or the square (src/world/village.ts updatePresence).
+ * Browser only: not in layoutJson, so the village model doesn't change.
+ */
+export const VILLAGER_SPOTS: Record<string, Partial<Record<PlaceId, { at: XY; face: XY }>>> = {
+  // By the bakery door, to one side, looking out for customers.
+  bramwell: { bakery: { at: [34.7, 4.3], face: [33, 2.4] } },
+  // In the patch she tends the peas from the open side; in the square she sits west of the well.
+  wren: { patch: { at: [18.8, 8.7], face: [18.8, 10.5] }, square: { at: [24, -3.4], face: [27, -3.4] }, bakery: { at: [35.6, 3.2], face: [34.7, 4.3] } },
+  tansy: { square: { at: [28.5, -5.7], face: [29.4, -4.4] }, bakery: { at: [35.6, 3.2], face: [34.7, 4.3] } },
+  kids: { square: { at: [25, -5.2], face: [27, -3.4] } },
+  voles: { square: { at: [29.7, -7], face: [29.4, -4.4] }, bakery: { at: [35.6, 3.2], face: [34.7, 4.3] } },
+  traveller: { square: { at: [32.6, -5], face: [29.4, -4.4] } },
+};
+
 /** Chimney tops, where the browser puffs smoke when a fire is lit. */
 export const CHIMNEYS: Record<string, [number, number, number]> = {
   burrow: [1.5, 4.4, 3.1],

@@ -187,6 +187,8 @@ function snapshot() {
           }
         : null,
     letters: s.world.letters.length,
+    // Who is where this hour, so the page can show the villagers.
+    present: s.world.present,
     diary: sim.log
       .filter((r) => r.diary)
       .slice(-40)

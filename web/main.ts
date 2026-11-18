@@ -5,12 +5,13 @@
 //
 // Debug: ?hour=19.5 fixes the light, ?weather=rain, ?pose=curl (walk, sniff, work, eat, sit,
 // paddle, stand) with ?dist=3, ?cam=x,y,z,tx,ty,tz (three.js), ?play starts as the bunny,
-// ?lite drops ambient occlusion and thins the grass for slow machines.
+// ?lite drops ambient occlusion and thins the grass for slow machines, ?villagers=all shows every
+// villager at their first spot whatever the sim says.
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { CHIMNEYS, PATHS, SPOTS, nodes, placeXY, type Spot, type XY } from '../src/world/layout.ts';
+import { CHIMNEYS, PATHS, SPOTS, VILLAGER_SPOTS, nodes, placeXY, type Spot, type XY } from '../src/world/layout.ts';
 import { PLACES, type PlaceId } from '../src/world/places.ts';
 import { loadTerrain } from './terrain.ts';
 import { createLook, type Weather } from './look.ts';
@@ -49,6 +50,8 @@ interface Snap {
   place: PlaceId;
   activity: Activity | null;
   letters: number;
+  /** Who is where this hour (villager ids by place). */
+  present?: Partial<Record<PlaceId, string[]>>;
   diary: DiaryLine[];
   pieces?: PieceRef[];
   readings?: Reading[];
@@ -127,11 +130,12 @@ function route(from: string, to: string): string[] {
 
 // ---------- loading ----------
 const loader = new GLTFLoader();
-const [terrain, village, khinaGltf, visitorGltf] = await Promise.all([
+const [terrain, village, khinaGltf, visitorGltf, villagersGltf] = await Promise.all([
   loadTerrain(),
   loader.loadAsync('/art/export/village.glb'),
   loader.loadAsync('/art/export/khina.glb'),
   loader.loadAsync('/art/export/visitor.glb').catch(() => null),
+  loader.loadAsync('/art/export/villagers.glb').catch(() => null),
 ]);
 const byName = (root: THREE.Object3D, name: string) => root.getObjectByName(name) ?? root.getObjectByName(name.replace(/\./g, ''));
 const groundY = (p: THREE.Vector3) => terrain.heightAt(p.x, -p.z);
@@ -248,6 +252,103 @@ if (visitorGltf) {
   player.placeAt(at[0] ?? 3.5, at[1] ?? -2.5);
   scene.add(player.object);
 }
+// ---------- the neighbours ----------
+// Bramwell, Old Wren, Tansy, Pip and Nettle, the voles and the traveller, each shown at their spot
+// while the sim has them at a place (snap.present), fading in and out as they come and go.
+interface Part { body: THREE.Object3D; head: THREE.Object3D; base: THREE.Vector3; phase: number; yaw: number; pitch: number }
+interface Neighbour { id: string; root: THREE.Object3D; parts: Part[]; place: PlaceId | null; shown: number; radius: number }
+const RADIUS: Record<string, number> = { bramwell: 0.55, wren: 0.5, tansy: 0.35, kids: 0.65, voles: 0.5, traveller: 0.6 };
+const neighbours: Neighbour[] = [];
+if (villagersGltf) {
+  villagersGltf.scene.traverse((o) => {
+    if (!(o instanceof THREE.Mesh)) return;
+    const name = (o.material as THREE.Material).name;
+    o.castShadow = !/^(Shine|Mouth|Eye)/.test(name);
+    o.receiveShadow = true;
+    if (name === 'Eye') (o.material as THREE.MeshStandardMaterial).envMapIntensity = 2.2;
+  });
+  if (!lite) addFuzz(villagersGltf.scene, { layers: 10 });
+  for (const id of Object.keys(VILLAGER_SPOTS)) {
+    const root = byName(villagersGltf.scene, `Villager.${id}`);
+    if (!root) continue;
+    const parts: Part[] = [];
+    root.traverse((o) => {
+      if (o instanceof THREE.Mesh || !o.name.endsWith('Body')) return;
+      let head: THREE.Object3D | null = null;
+      o.traverse((c) => {
+        if (!head && !(c instanceof THREE.Mesh) && c !== o && c.name.endsWith('Head')) head = c;
+      });
+      if (head) parts.push({ body: o, head, base: o.position.clone(), phase: Math.random() * 6.28, yaw: 0, pitch: 0 });
+    });
+    root.visible = false;
+    scene.add(root);
+    neighbours.push({ id, root, parts, place: null, shown: 0, radius: RADIUS[id] ?? 0.5 });
+  }
+}
+const showAll = params.get('villagers') === 'all';
+
+/** Where the sim has this villager now (a place with a spot for them), or null. */
+function whereIs(n: Neighbour): PlaceId | null {
+  const spots = VILLAGER_SPOTS[n.id] ?? {};
+  if (showAll) return (Object.keys(spots)[0] as PlaceId | undefined) ?? null;
+  for (const [place, who] of Object.entries(snap?.present ?? {}) as [PlaceId, string[]][]) if (who?.includes(n.id) && spots[place]) return place;
+  return null;
+}
+
+function updateNeighbours(dt: number, tau: number) {
+  for (const n of neighbours) {
+    const want = whereIs(n);
+    // Moving between places: fade out where they were, then appear at the new spot.
+    if (want !== n.place && n.shown < 0.05) {
+      n.place = want;
+      const spot = want ? VILLAGER_SPOTS[n.id]?.[want] : undefined;
+      if (spot) {
+        const p = V(spot.at);
+        n.root.position.set(p.x, groundY(p), p.z);
+        const f = V(spot.face).sub(p);
+        n.root.rotation.y = Math.atan2(f.x, f.z);
+      }
+    }
+    n.shown = damp(n.shown, want && want === n.place ? 1 : 0, 4, dt);
+    n.root.visible = n.shown > 0.02;
+    if (!n.root.visible) continue;
+    n.root.scale.setScalar(0.4 + 0.6 * n.shown);
+    // Who to look at: Khina, or you, whoever is nearer (and within a few metres).
+    let look: THREE.Vector3 | null = null;
+    let best = 4;
+    for (const [who, ok] of [[pet.position, pet.visible], [player?.object.position, !!player]] as [THREE.Vector3 | undefined, boolean][]) {
+      if (!who || !ok) continue;
+      const d = Math.hypot(who.x - n.root.position.x, who.z - n.root.position.z);
+      if (d < best) {
+        best = d;
+        look = who;
+      }
+    }
+    for (const p of n.parts) {
+      // Breathing, a little sway, and a slow look round; heads turn toward whoever comes close.
+      p.body.position.y = p.base.y + 0.006 * Math.sin(tau * 2 + p.phase);
+      p.body.scale.set(1, 1 + 0.014 * Math.sin(tau * 2 + p.phase), 1);
+      p.body.rotation.z = 0.025 * Math.sin(tau * 0.6 + p.phase);
+      let yaw = 0.4 * Math.sin(tau * 0.23 + p.phase) * Math.sin(tau * 0.09 + p.phase * 2);
+      let pitch = 0.05 * Math.sin(tau * 0.4 + p.phase);
+      if (look) {
+        const world = new THREE.Vector3();
+        p.head.getWorldPosition(world);
+        const parentYaw = new THREE.Euler().setFromQuaternion(p.head.parent!.getWorldQuaternion(new THREE.Quaternion()), 'YXZ').y;
+        const rel = wrap(Math.atan2(look.x - world.x, look.z - world.z) - parentYaw);
+        if (Math.abs(rel) < 1.9) {
+          const k = THREE.MathUtils.smoothstep(4 - best, 0, 1.2);
+          yaw = THREE.MathUtils.lerp(yaw, THREE.MathUtils.clamp(rel, -1.0, 1.0), k);
+          pitch = THREE.MathUtils.lerp(pitch, -0.12, k);
+        }
+      }
+      p.yaw = damp(p.yaw, yaw, 4, dt);
+      p.pitch = damp(p.pitch, pitch, 4, dt);
+      p.head.rotation.set(p.pitch, p.yaw, 0);
+    }
+  }
+}
+
 type Mode = 'khina' | 'player';
 let mode: Mode = params.has('play') && player ? 'player' : 'khina';
 
@@ -655,6 +756,18 @@ function frame(dtMs: number) {
     const yaw = Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z);
     player.update(dt, yaw); // always animates; the first key press also hands you the camera
     if (mode !== 'player' && player.wantsControl) setMode('player');
+    // Don't walk through the neighbours.
+    for (const n of neighbours) {
+      if (!n.root.visible) continue;
+      const dx = player.object.position.x - n.root.position.x;
+      const dz = player.object.position.z - n.root.position.z;
+      const d = Math.hypot(dx, dz);
+      const r = n.radius + 0.35;
+      if (d < r && d > 1e-4) {
+        player.object.position.x = n.root.position.x + (dx / d) * r;
+        player.object.position.z = n.root.position.z + (dz / d) * r;
+      }
+    }
     // Don't walk through Khina.
     if (pet.visible) {
       const dx = player.object.position.x - pet.position.x;
@@ -666,6 +779,8 @@ function frame(dtMs: number) {
       }
     }
   }
+
+  updateNeighbours(dt, tau);
 
   // The world around.
   const s = snap;

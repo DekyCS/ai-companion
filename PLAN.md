@@ -202,6 +202,12 @@ Falling back to the Claude subscription when credits run out: see the note at th
      - The internet hut (`nethut`, `browse`): Sonnet 5.5 with web search (at most 2 searches), read-only, gentle-topics rule, page text treated as information. What Khina found becomes a thought, a memory and a line in later prompts. Trial: $0.035 and 12 s per lookup.
      - Budget: pieces and the internet share `KHINA_EXTRAS_CAP_USD` (default $0.30 a day) inside the daily cap; when it runs out, making is words only and the hut's computer stays off.
      - UI inspired by pinos.world's layout (needs strip, "right now" card, status pill, menu, bottom sheets for Diary, Gallery, Internet), in Khina's own palette.
+   - 2026-11-17/18, after a day live at 24×:
+     - The extras budget was gone by 2 a.m. (15 pieces in two Khina days, then words only for 22 hours), so it is now let out evenly through the real day (`extrasAllowance`), and `make` is off the menu while there is no budget, so the diary never claims a piece that is not in the Gallery.
+     - Claude cost about $0.73 a real day for choosing and writing ($0.030 a Khina day by day 34, up from $0.02 on day 1: longer prompts); with extras that crossed the $1 cap near 11 p.m. The night page was half of it on Opus, so the live server writes it with Sonnet (`KHINA_NIGHT_MODEL`). `/spend` shows cost per job.
+     - "It did less for me than it used to" ended nearly every diary line, because the stale note went into the facts each time; now the diary is told only every third time, to say it in its own words.
+     - A question already looked up is remembered instead of searched again (it happened twice in a day).
+     - Posting (`post` at the internet hut, `src/outlets.ts`): up to 3 short posts a real day, paced, shown under Internet → posts; sent to Bluesky and/or X only when the account keys are set. Post only; links, mentions, hashtags and selling are stripped or refused. A bot can't sign up for an account, so the user makes it by hand.
 
 ## Where the evidence is
 

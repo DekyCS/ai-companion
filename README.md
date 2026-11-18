@@ -22,8 +22,9 @@ Khina looks up at you when you come close.
 Debug views: `?pose=curl&dist=3` (or walk, sniff, work, eat, sit, paddle) holds a pose; `?hour=19.5`
 and `?weather=rain` fix the light; `?clean` hides the panels; `?lite` is lighter for slow machines.
 
-The models are made in Blender by script, from `art/khina.py`, `art/village.py` and `art/visitor.py`;
-`npm run art` rebuilds `art/export/*.glb`, `art/export/terrain.json` (ground height, where grass grows,
+The models are made in Blender by script, from `art/khina.py`, `art/village.py`, `art/visitor.py` and
+`art/villagers.py` (Bramwell, Old Wren, Tansy, Pip and Nettle, the voles and the traveller, shown wherever the
+sim has them this hour; `?villagers=all` shows them all); `npm run art` rebuilds `art/export/*.glb`, `art/export/terrain.json` (ground height, where grass grows,
 what you can't walk through), the editable `art/*.blend` files and preview pictures in `art/previews/`.
 Where everything stands is in `src/world/layout.ts`, shared by Blender and the browser.
 
