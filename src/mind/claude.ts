@@ -17,7 +17,7 @@ import type { Completed, PieceRef, Reading, State } from '../state.ts';
 import { stamp } from '../time.ts';
 import type { Candidate, Mind, MindStats, Proposal, Sense } from './decide.ts';
 import { checkPiece, checkReading, cleanPost, makePrompt, makeSystem, MAKE_SCHEMA, postPrompt, postSystem, POST_SCHEMA, webPrompt, webSystem, WEB_SCHEMA, type PieceDraft, type PieceRequest } from './making.ts';
-import { decidePrompt, DECIDE_SCHEMA, decideSystem, diaryPrompt, DIARY_SCHEMA, diarySystem, reflectSystem } from './prompts.ts';
+import { decidePrompt, DECIDE_SCHEMA, decideSystem, diaryPrompt, DIARY_SCHEMA, diarySystem, HEDGEHOG_SELF, reflectSystem } from './prompts.ts';
 import { reflectPrompt, REFLECT_SCHEMA, type ReflectInput, type ReflectOutput } from './sleep.ts';
 import type { Option } from './score.ts';
 
@@ -261,6 +261,8 @@ export class ClaudeMind implements Mind {
       .replace(/!/g, '.')
       .replace(/^["']|["']$/g, '')
       .trim();
+    // A line that gives her spines again is left to code's own words.
+    if (HEDGEHOG_SELF.test(line)) return null;
     return keepShort(line) || null;
   }
 

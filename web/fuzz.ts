@@ -87,12 +87,21 @@ export function addFuzz(root: THREE.Object3D, opts: { layers?: number; density?:
         .replace(
           '#include <color_fragment>',
           `#include <color_fragment>
-          diffuseColor.rgb *= mix(0.62, 1.08, vShell);`,
+          // Darker near the skin, lighter at the tips; seen from very close (the camera pulled in
+          // past a wall) the fibres are big on screen, so the contrast eases off to keep them soft
+          // instead of a grey speckle.
+          float fzNear = smoothstep(0.35, 1.3, length(vViewPosition));
+          diffuseColor.rgb *= mix(mix(0.86, 1.02, vShell), mix(0.62, 1.08, vShell), fzNear);`,
         );
     };
     mat.customProgramCacheKey = () => `fuzz-${layers}`;
     const shells = new THREE.InstancedMesh(geo, mat, layers);
     shells.name = `${mesh.name}.fuzz`;
+    // Shape keys (Khina's ears lying back): the shells share the mesh's weights, so the fuzz follows.
+    if (mesh.morphTargetInfluences) {
+      shells.morphTargetInfluences = mesh.morphTargetInfluences;
+      shells.morphTargetDictionary = mesh.morphTargetDictionary;
+    }
     shells.castShadow = false;
     shells.receiveShadow = true;
     shells.frustumCulled = false;

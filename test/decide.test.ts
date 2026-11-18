@@ -95,7 +95,19 @@ test('template diary lines are first person', () => {
   const line = templateDiary({
     kind: 'done', actionId: 'fish', label: '', gist: '', place: 'stream', start: 0, end: 10, detail: '', reason: '',
     origin: 'autopilot', diary: '', diaryBy: 'none', moodBefore: 50, moodAfter: 40,
-    outcome: 'was watching the fish when a heron landed close by; Khina curled up tight until it left',
+    outcome: 'was watching the fish when a heron landed close by; Khina thumped a back foot once, then froze flat in the grass until it left',
   });
-  assert.equal(line, 'Was watching the fish when a heron landed close by; I curled up tight until it left.');
+  assert.equal(line, 'Was watching the fish when a heron landed close by; I thumped a back foot once, then froze flat in the grass until it left.');
+  const own = templateDiary({
+    kind: 'done', actionId: 'own.nature', label: '', gist: '', place: 'stream', start: 0, end: 10, detail: '', reason: '',
+    origin: 'autopilot', diary: '', diaryBy: 'none', moodBefore: 50, moodAfter: 50,
+    outcome: "did something of Khina's own: count the stones along the path",
+  });
+  assert.equal(own, 'Did something of my own: count the stones along the path.');
+  const dark = templateDiary({
+    kind: 'refused', actionId: 'explore', label: '', gist: '', place: 'woods', start: 0, end: 10, detail: '', reason: '',
+    origin: 'autopilot', diary: '', diaryBy: 'none', moodBefore: 50, moodAfter: 45,
+    outcome: 'hopped over to the woods to follow a path Khina has not tried, but it was too dark',
+  });
+  assert.equal(dark, 'Hopped over to the woods to follow a path I have not tried, but it was too dark.');
 });

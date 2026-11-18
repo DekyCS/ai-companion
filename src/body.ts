@@ -40,16 +40,16 @@ export function addThought(s: State, th: { key: string; text: string; value: num
 // What a need past the line sounds like in Khina's head, from mild to bad.
 const NEED_VOICE: Record<NeedId, [string[], string[]]> = {
   fullness: [
-    ['Tummy is grumbling.', 'Could do with something to eat.', 'Thinking about beetles. A lot.'],
+    ['Tummy is grumbling.', 'Could do with something to eat.', 'Thinking about clover. A lot.'],
     ['Starving.', 'So hungry it hurts.', 'Empty all the way down.'],
   ],
   rest: [
-    ['Eyes keep drifting shut.', 'Paws are heavy.', 'Could curl up anywhere.'],
+    ['Eyes keep drifting shut.', 'Ears keep drooping.', 'Could flop down anywhere.'],
     ['So tired everything is blurry.', 'Can barely keep going.', 'Running on nothing.'],
   ],
   calm: [
-    ['Jumpy. Cannot settle.', 'Spines keep bristling for no reason.', 'Everything is a bit much.'],
-    ['Everything is too much.', 'Nerves all prickly and loud.', 'Want to curl into a ball and stay there.'],
+    ['Jumpy. Cannot settle.', 'Ears keep swivelling at nothing.', 'Everything is a bit much.'],
+    ['Everything is too much.', 'A back foot keeps wanting to thump.', 'Want to press flat under something and stay there.'],
   ],
   company: [
     ['Not a word from anyone in ages.', 'Quiet on my own today.', 'Would not mind seeing a face.'],
@@ -57,7 +57,7 @@ const NEED_VOICE: Record<NeedId, [string[], string[]]> = {
   ],
   novelty: [
     ['Same old, same old.', 'Nothing new ever happens here.', 'Bored.'],
-    ['Bored out of my spines.', 'If nothing changes soon I will scream.', 'Every day is the same day.'],
+    ['Bored to the tips of my ears.', 'If nothing changes soon I will scream.', 'Every day is the same day.'],
   ],
   making: [
     ['Paws want to make something.', 'Have not made anything in a while.', 'Itchy to build something.'],

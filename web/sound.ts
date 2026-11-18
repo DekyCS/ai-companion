@@ -18,7 +18,7 @@ export interface Sound {
   /** Turns sound on or off (must be called from a click the first time). Returns the new state. */
   toggle(): Promise<boolean>;
   update(s: SoundScene): void;
-  /** One footstep, `dist` metres from the camera; `size` 0.5 for Khina, 1 for the bunny. */
+  /** One footstep, `dist` metres from the camera; `size` 0.5 for one of Khina's hops, 0.7 for the hedgehog. */
   step(dist: number, size: number): void;
   /** Live node count, for checking the graph. */
   nodes(): number;

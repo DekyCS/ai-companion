@@ -64,6 +64,8 @@ export interface Spot {
   inside?: boolean;
   /** How Khina holds still there. */
   pose: 'stand' | 'sit' | 'curl' | 'sniff' | 'work' | 'eat' | 'paddle';
+  /** For work at a table: the height of its top above the ground, where her front paws rest. */
+  table?: number;
 }
 
 const BURROW_DOOR: XY = [0, 0.6];
@@ -77,19 +79,21 @@ export const SPOTS: Record<string, Spot> = {
   tidy: { at: BURROW_DOOR, face: [0, 3], inside: true, pose: 'work' },
   rain: { at: BURROW_DOOR, face: [0, 3], inside: true, pose: 'sit' },
   letterbox: { at: [2.2, -1.1], face: [2.2, 0], pose: 'stand' },
-  whittle: { at: [5, 3.2], face: [5, 5], pose: 'work' },
-  draw: { at: [5.9, 3.2], face: [5.9, 5], pose: 'work' },
-  sort: { at: [4.1, 3.2], face: [4.1, 5], pose: 'work' },
-  tinker: { at: [5.3, 3.2], face: [5.3, 5], pose: 'work' },
+  // At the shed's workbench (front edge y 4.2, top 0.55): up on her haunches, paws on the edge.
+  whittle: { at: [5, 3.93], face: [5, 5], pose: 'work', table: 0.55 },
+  draw: { at: [5.9, 3.93], face: [5.9, 5], pose: 'work', table: 0.55 },
+  sort: { at: [4.1, 3.93], face: [4.1, 5], pose: 'work', table: 0.55 },
+  tinker: { at: [5.3, 3.93], face: [5.3, 5], pose: 'work', table: 0.55 },
   crusts: { at: [30.6, 3.4], face: [29.6, 3.6], pose: 'eat' },
   warm: { at: BAKERY_DOOR, face: [33, 7], inside: true, pose: 'sit' },
   bench: { at: [27, -0.15], z: 0.5, face: [27, -4], pose: 'sit' },
   chat: { at: [29.4, -4.4], face: [27, -3.4], pose: 'stand' },
   weed: { at: [17, 8], face: [17, 10], pose: 'work' },
   pea: { at: [20.6, 8], face: [20.6, 10], pose: 'eat' },
-  paddle: { at: [10, -17.2], face: [8, -17.6], pose: 'paddle' },
+  // On the north bank, facing the water (the stream is about 3.5 m wide; its middle here is at y -17.8).
+  paddle: { at: [9.4, -15.84], face: [9.4, -18], pose: 'paddle' },
   fish: { at: [12.4, -15.7], face: [12.4, -18], pose: 'sit' },
-  dam: { at: [14.8, -16.4], face: [15, -18], pose: 'work' },
+  dam: { at: [14.8, -15.92], face: [15, -18], pose: 'work' },
   forage: { at: [-16.4, 16.6], face: [-15, 15], pose: 'sniff' },
   birds: { at: [-18.6, 18.4], face: [-19, 21], pose: 'sit' },
   explore: { at: [-24, 24], face: [-27, 27], pose: 'sniff' },
@@ -97,9 +101,10 @@ export const SPOTS: Record<string, Spot> = {
   moss: { at: [-9.6, 29.4], face: [-9, 31], pose: 'curl' },
   train: { at: [44.4, -9], z: 0.45, face: [47, -9], pose: 'sit' },
   timetable: { at: [44.4, -5.6], z: 0.45, face: [45.4, -5.6], pose: 'stand' },
-  // The internet hut: Khina sits on a cushion at the old computer on the porch.
-  browse: { at: [18.01, -11.43], z: 0.07, face: [17.31, -11.0], pose: 'sit' },
-  post: { at: [18.01, -11.43], z: 0.07, face: [17.31, -11.0], pose: 'sit' },
+  // The internet hut: Khina sits on the front of a cushion (centre [18.01, -11.43], top 0.08) at
+  // the old computer on the porch, paws on the keyboard (top 0.31) in front of her.
+  browse: { at: [17.78, -11.31], z: 0.08, face: [17.38, -11.09], pose: 'work', table: 0.31 },
+  post: { at: [17.78, -11.31], z: 0.08, face: [17.38, -11.09], pose: 'work', table: 0.31 },
   nethut_idle: { at: [18.95, -11.05], face: [18.95, -13], pose: 'stand' },
 };
 

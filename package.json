@@ -2,7 +2,7 @@
   "name": "khina",
   "version": "0.1.0",
   "private": true,
-  "description": "Khina the hedgehog: an autonomous little guy who lives in a forest village.",
+  "description": "Khina the bunny: an autonomous little bunny who lives in a forest village.",
   "type": "module",
   "engines": {
     "node": ">=24"

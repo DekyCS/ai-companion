@@ -189,7 +189,7 @@ export function computeBeliefs(s: State, label: (key: string) => string): Belief
   return out.sort((a, b) => b.days - a.days);
 }
 
-function beliefText(key: string, polarity: 'likes' | 'dislikes', label: (key: string) => string): string {
+export function beliefText(key: string, polarity: 'likes' | 'dislikes', label: (key: string) => string): string {
   const what = label(key);
   return polarity === 'likes' ? `Khina has come to like ${what}.` : `Khina is not keen on ${what}.`;
 }

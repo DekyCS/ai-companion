@@ -91,7 +91,7 @@ const LETTERS: { from: VillagerId; text: string }[] = [
   { from: 'voles', text: 'The mill wheel squeaks again. If you know anything about squeaks, we would be grateful.' },
   { from: 'tansy', text: 'Your letterbox flag sticks. I gave it a push. You are welcome.' },
   { from: 'kids', text: 'we are building a den in the woods and you can be in it if you bring snacks' },
-  { from: 'wren', text: 'A hedgehog was here before you, years back. Kept a garden of stones. You remind me of her.' },
+  { from: 'wren', text: 'A rabbit lived in your burrow before you, years back. Kept a garden of stones. You remind me of her.' },
 ];
 
 export function newLetter(t: number, rng: Rng): Letter {
@@ -102,7 +102,7 @@ export function newLetter(t: number, rng: Rng): Letter {
 export const FINDS = [
   'a blue button',
   'a bottle cap with a fox on it',
-  'an empty snail shell, striped',
+  'a hazelnut shell with a neat hole in it',
   'a key with no lock',
   'a marble with a crack in it',
   'a grey and white feather',
@@ -125,9 +125,9 @@ export const SIGHTS = [
   'an old signpost with the letters worn off',
   'a field of tall grass on the far side of the wood',
   'a bench nobody uses, covered in ivy',
-  'a gap in a fence just hedgehog-sized',
+  'a gap in a fence just bunny-sized',
   'the railway line from up on the embankment',
-  'a stone wall full of snail shells',
+  'a stone wall with wild strawberries along the bottom',
   'a pond with one duck on it',
 ];
 
@@ -165,7 +165,7 @@ export interface WorldState {
 const FIND_COLOURS = ['red', 'blue', 'green', 'white', 'yellow', 'black', 'chipped', 'tiny', 'odd-shaped'];
 const FIND_THINGS = ['button', 'bead', 'marble', 'buckle', 'bottle stopper', 'hairpin', 'thimble', 'toy wheel'];
 const FIND_NATURE_ADJ = ['speckled', 'striped', 'white', 'grey', 'tiny', 'odd-shaped', 'pale'];
-const FIND_NATURE = ['feather', 'pebble', 'snail shell', 'acorn cap', 'beetle wing', 'seed pod'];
+const FIND_NATURE = ['feather', 'pebble', 'hazelnut shell', 'acorn cap', 'eggshell', 'seed pod'];
 const SIGHT_ADJ = ['a mossy', 'a hollow', 'a split', 'a tilted', 'an ivy-covered', 'a half-sunk', 'a crooked', 'a white-barked'];
 const SIGHT_THING = ['stump', 'boulder', 'log', 'old gate', 'cart wheel', 'root bridge', 'stone step', 'tumbled wall'];
 const SIGHT_WHERE = [

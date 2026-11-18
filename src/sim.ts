@@ -10,7 +10,7 @@ import { remember } from './mind/memory.ts';
 import { nightly } from './mind/sleep.ts';
 import { maybeDrama } from './world/drama.ts';
 import { decide, SENSES, type Decision, type Mind } from './mind/decide.ts';
-import { onMind, STALE_NOTE, templateDiary } from './mind/prompts.ts';
+import { fromHedgehogDays, onMind, STALE_NOTE, templateDiary } from './mind/prompts.ts';
 import { formFor, pieceRequest } from './mind/making.ts';
 import type { PieceStore } from './pieces.ts';
 import { Rng as Seeded, type Rng } from './rng.ts';
@@ -56,7 +56,7 @@ export interface SimOptions {
   onEvent?: (e: Record<string, unknown>) => void;
   /**
    * Live server only: where real pieces are kept. With it, Khina may make real things, have ideas
-   * of its own and use the internet hut (when the model is on and the budget lasts). Without it the
+   * of her own and use the internet hut (when the model is on and the budget lasts). Without it the
    * village life is exactly the fixed one, so experiments measure what they always measured.
    */
   pieces?: PieceStore;
@@ -172,7 +172,7 @@ export class Sim {
     const snap: HourSnap = {
       t: s.t,
       place: PLACES[s.place].short,
-      doing: !a ? '' : a.kind === 'walk' ? `walking to ${PLACES[a.place].short}` : actionDef(a.actionId).doing,
+      doing: !a ? '' : a.kind === 'walk' ? `hopping over to ${PLACES[a.place].short}` : actionDef(a.actionId).doing,
       weather: w.weather,
       mood: Math.round(s.mood),
       energy: Math.round(s.energy),
@@ -260,12 +260,12 @@ export class Sim {
       return;
     }
     const short = PLACES[a.place].short;
-    addThought(s, { key: 'thwarted', text: `Walked to ${short} for nothing`, value: -2, hours: 2 });
+    addThought(s, { key: 'thwarted', text: `Hopped over to ${short} for nothing`, value: -2, hours: 2 });
     await this.finish(
       {
         kind: 'refused', actionId: def.id, label: def.label, gist: def.gist, place: a.place,
         start: a.startedAt, end: s.t, detail: a.detail, reason: a.reason, origin: a.origin,
-        outcome: `walked to ${short} to ${def.label}, but ${why}`,
+        outcome: `hopped over to ${short} to ${def.label}, but ${why}`,
         who: [...presentAt(s.world, a.place)],
         diary: '', diaryBy: 'none', moodBefore: a.moodBefore, moodAfter: s.mood,
       },
@@ -287,7 +287,8 @@ export class Sim {
     }
     if (def.work === 'post') {
       if (!m.writePost || !m.canPost?.()) return;
-      const latest = s.pieces.at(-1);
+      // The latest thing she made as a bunny (a hedgehog-era piece is not hers to post about now).
+      const latest = s.pieces.findLast((p) => !fromHedgehogDays(s, p.t, p.title));
       const hoursAgo = latest ? (s.t - latest.t) / 60 : null;
       const recent = this.log.filter((r) => r.diary).slice(-5).map((r) => r.diary as string);
       const job = m.writePost(s, act.detail, recent, latest, hoursAgo).then((p): WorkResult =>
@@ -363,7 +364,7 @@ export class Sim {
     }
     recordUse(s, def, a.place);
     if (out.pantry) {
-      for (const [k, v] of Object.entries(out.pantry) as [FoodId, number][]) s.pantry[k] = Math.max(0, s.pantry[k] + v);
+      for (const [k, v] of Object.entries(out.pantry) as [FoodId, number][]) s.pantry[k] = Math.max(0, (s.pantry[k] ?? 0) + v);
     }
     if (out.find) s.finds.push({ name: out.find, t: s.t });
     if (out.made) s.made.push({ what: out.made, t: s.t });

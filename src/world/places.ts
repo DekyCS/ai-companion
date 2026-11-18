@@ -1,4 +1,4 @@
-// The forest village. Coordinates are rough hedgehog-scale distances.
+// The forest village. Coordinates are rough bunny-scale distances.
 
 export type PlaceId = 'burrow' | 'shed' | 'bakery' | 'square' | 'patch' | 'stream' | 'woods' | 'clearing' | 'halt' | 'nethut';
 

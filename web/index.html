@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Khina</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><path d='M8 44 L12 30 L17 36 L20 20 L26 30 L31 14 L35 28 L41 17 L43 31 L50 24 L50 40 Q56 44 58 48 Q50 54 38 52 L14 52 Q6 50 8 44Z' fill='%236b4a33'/><path d='M42 38 Q54 40 58 48 Q50 53 40 51Z' fill='%23e8cfa4'/><circle cx='49' cy='44' r='2' fill='%233b2a20'/><circle cx='58' cy='48' r='2.2' fill='%233b2a20'/></svg>" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><g stroke='%233b2a20' stroke-width='2.5' fill='%23f8f1e6'><ellipse cx='21' cy='19' rx='7' ry='16' transform='rotate(-14 21 19)'/><ellipse cx='43' cy='19' rx='7' ry='16' transform='rotate(14 43 19)'/><ellipse cx='32' cy='43' rx='21' ry='18'/></g><ellipse cx='21' cy='20' rx='3' ry='10' transform='rotate(-14 21 20)' fill='%23f4b0b8'/><ellipse cx='43' cy='20' rx='3' ry='10' transform='rotate(14 43 20)' fill='%23f4b0b8'/><circle cx='24' cy='42' r='3.4' fill='%233b2a20'/><circle cx='40' cy='42' r='3.4' fill='%233b2a20'/><circle cx='25.2' cy='40.8' r='1.1' fill='white'/><circle cx='41.2' cy='40.8' r='1.1' fill='white'/><circle cx='18' cy='49' r='3.2' fill='%23f2a7a5' opacity='.75'/><circle cx='46' cy='49' r='3.2' fill='%23f2a7a5' opacity='.75'/><path d='M29.5 47.5 h5 l-2.5 3z' fill='%23d9777a'/></svg>" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;600;700;800&display=swap" rel="stylesheet" />
     <style>
@@ -81,7 +81,7 @@
 
       /* Bottom */
       #statusPill { bottom: 16px; left: 50%; transform: translateX(-50%); padding: 6px 16px 6px 6px; max-width: min(560px, calc(100vw - 32px)); font-size: 15px; font-weight: 600; }
-      #statusPill .hog { width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--line); background: radial-gradient(circle at 60% 40%, #f1e6d2 0 28%, #8a6a52 30% 100%); flex: none; }
+      #statusPill .face { width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--line); background: #cfe2b4 url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><g stroke='%233b2a20' stroke-width='2.5' fill='%23f8f1e6'><ellipse cx='23' cy='22' rx='6' ry='14' transform='rotate(-12 23 22)'/><ellipse cx='41' cy='22' rx='6' ry='14' transform='rotate(12 41 22)'/><ellipse cx='32' cy='45' rx='19' ry='15'/></g><ellipse cx='23' cy='21' rx='2.6' ry='8' transform='rotate(-12 23 21)' fill='%23f4b0b8'/><ellipse cx='41' cy='21' rx='2.6' ry='8' transform='rotate(12 41 21)' fill='%23f4b0b8'/><circle cx='25' cy='44' r='3.2' fill='%233b2a20'/><circle cx='39' cy='44' r='3.2' fill='%233b2a20'/><circle cx='26' cy='43' r='1' fill='white'/><circle cx='40' cy='43' r='1' fill='white'/><circle cx='19.5' cy='50' r='3' fill='%23f6a0b0' opacity='.8'/><circle cx='44.5' cy='50' r='3' fill='%23f6a0b0' opacity='.8'/><path d='M29.8 48.5 h4.4 l-2.2 2.6z' fill='%23e48a98'/></svg>") center / 100% no-repeat; flex: none; }
       #statusText { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       #statusText b { font-weight: 800; }
       #feed { position: fixed; right: 16px; bottom: 16px; width: 360px; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; pointer-events: none; }
@@ -214,7 +214,7 @@
         <button id="walk" aria-pressed="false"><span>Walk around</span><i class="round" data-icon="walk"></i></button>
       </nav>
 
-      <div id="statusPill" class="pill"><i class="hog"></i><span id="statusText"></span></div>
+      <div id="statusPill" class="pill"><i class="face"></i><span id="statusText"></span></div>
       <div id="feed" aria-live="polite"></div>
       <div id="hint" class="pill"><b>WASD</b> walk · <b>Shift</b> run · <b>Space</b> hop · drag to look</div>
       <div id="toast" class="pill" hidden></div>

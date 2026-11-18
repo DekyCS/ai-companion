@@ -10,7 +10,7 @@
 // start, catching up on the time missed. Hosting (Railway) sets PORT; then it listens on all
 // interfaces. See Dockerfile.
 
-import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { readFile } from 'node:fs/promises';
 import { createServer, type ServerResponse } from 'node:http';
@@ -18,6 +18,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import { dirname, extname, join, normalize, sep } from 'node:path';
 import { parseArgs } from 'node:util';
 import { budget } from './config.ts';
+import { fromHedgehogDays, migrateSave } from './migrate.ts';
 import { makeMind } from './minds.ts';
 import { Rng } from './rng.ts';
 import { Sim } from './sim.ts';
@@ -87,6 +88,13 @@ function minutesIntoWeek(d: Date): number {
   return ((d.getDay() + 6) % 7) * 1440 + d.getHours() * 60 + d.getMinutes();
 }
 const s = saved?.s ?? newState(seed);
+// Khina became a bunny on 2026-11-18; a save from her hedgehog days is brought over once, state and
+// diary log together. The file as it was is kept next to it, untouched, in case it is ever wanted back.
+if (saved && persistPath && migrateSave(saved)) {
+  const kept = `${persistPath}.hedgehog.json`;
+  if (!existsSync(kept)) copyFileSync(persistPath, kept);
+  console.log(`Brought ${persistPath} over from Khina's hedgehog days: she is a bunny now (the old save is kept in ${kept}).`);
+}
 if (!saved && realClock) {
   s.t = minutesIntoWeek(new Date());
   s.lastNotable = s.t;
@@ -195,11 +203,14 @@ function snapshot() {
       .filter((r) => r.diary)
       .slice(-40)
       .map((r) => ({ t: r.end, clock: clock(r.end), day: dayOf(r.end), text: r.diary, place: PLACES[r.place].short, actionId: r.actionId })),
-    pieces: (s.pieces ?? []).slice(-12).map(withClock),
-    readings: (s.readings ?? []).slice(-8).map(withClock),
-    posts: (s.posts ?? []).slice(-10).map(withClock),
+    // Pieces, lookups and posts from her hedgehog days stay in the save, but visitors see only the
+    // bunny's (as with the diary and the night pages, which the migration already cleaned).
+    pieces: (s.pieces ?? []).filter((p) => !fromHedgehogDays(s, p.t, p.title)).slice(-12).map(withClock),
+    readings: (s.readings ?? []).filter((r) => !fromHedgehogDays(s, r.t, `${r.question} ${r.learned}`)).slice(-8).map(withClock),
+    posts: (s.posts ?? []).filter((p) => !fromHedgehogDays(s, p.t, `${p.text} ${p.about}`)).slice(-10).map(withClock),
     postsTo: outlets.map((o) => o.name),
-    pages: s.pages.slice(-5).map((p) => ({ day: p.day, text: p.text })),
+    // Nights she wrote nothing (code alone, or a page turned away) leave no blank page on the site.
+    pages: s.pages.filter((p) => p.text.trim()).slice(-5).map((p) => ({ day: p.day, text: p.text })),
     moodArc: sim.hours.slice(-48).map((h) => ({ t: h.t, mood: h.mood })),
   };
 }
@@ -266,7 +277,7 @@ const server = createServer(async (req, res) => {
   }
   if (url === '/pieces') {
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
-    res.end(JSON.stringify({ pieces: store.list().reverse().map(withClock) }));
+    res.end(JSON.stringify({ pieces: store.list().filter((p) => !fromHedgehogDays(s, p.t, p.title)).reverse().map(withClock) }));
     return;
   }
   if (url.startsWith('/pieces/')) {

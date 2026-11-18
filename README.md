@@ -1,6 +1,6 @@
 # Khina
 
-A small hedgehog who lives in a forest village and decides what to do by itself.
+A small bunny who lives in a forest village and decides what to do by herself.
 Watch Khina live in a 3D village in the browser, or run days as text: a diary, with a page written each night.
 
 ## Watch Khina
@@ -15,7 +15,7 @@ npm run live -- --model           # Claude chooses and writes (about $0.023 a ga
 The server runs the sim and streams each event to the page, which walks Khina along the village paths
 to the spot for each action. Drag to look around; "Follow Khina" keeps the camera on Khina.
 
-Walk around yourself as a little felt bunny: **WASD** or the arrow keys (relative to the camera),
+Walk around yourself as a little felt hedgehog: **WASD** or the arrow keys (relative to the camera),
 **Shift** to run, **Space** to hop. The first key press hands you the camera; "Follow Khina" gives it back.
 Khina looks up at you when you come close. The villagers stand where the sim says they are, the little
 train stops at the halt on its timetable, and the speaker button turns on the sound (wind, rain, the stream,
@@ -37,12 +37,13 @@ real hour (`--rate 24`; `--rate 1` would put Khina on your wall clock, set by `T
 Khina day, so about $0.55 a real day, capped by `KHINA_DAILY_CAP_USD` (default $1).
 The `Dockerfile` runs `src/live.ts --model --clock real --rate 24 --persist data/khina-state.json`; a volume at
 `/app/data` keeps Khina's life and the spend ledger across redeploys, and after downtime the sim
-catches up on the hours missed. Redeploy with `railway up --detach`; logs with `railway logs`.
+catches up on the hours missed. A save from before 2026-11-18, when Khina was a hedgehog, is brought
+over once on load (`src/migrate.ts`: dried beetles become clover, hedgehog-only memories and diary lines are let go; the file as it was is kept next to it as `<save>.hedgehog.json`). Redeploy with `railway up --detach`; logs with `railway logs`.
 
 ## Beyond the fixed village life (live server)
 
 On `npm run live`, Khina can also:
-- do anything of its own: Claude may propose an idea that is not on the menu, with where and what kind of thing it is; Khina's needs still weigh it;
+- do anything of her own: Claude may propose an idea that is not on the menu, with where and what kind of thing it is; Khina's needs still weigh it;
 - make real pieces: pictures (SVG), poems, short stories, songs (a tune the page plays) and little games, kept in `<save folder>/pieces/` and shown in the Gallery;
 - look things up at the internet hut: a real web search, read-only; what Khina found shows under Internet and turns into memories.
 
@@ -69,7 +70,7 @@ npm run day -- --offline          # one day on code alone, free
 npm run day                       # one day with Claude choosing and writing (needs a key)
 npm run long -- --compare         # 40 days × 3 seeds, phase 2 off vs on, repetition measures (free)
 npm run copies -- --compare       # 5 identical copies × 40 days: do they become individuals? (free)
-npm test                          # 58 tests
+npm test                          # 69 tests
 npm run check                     # type-check the sim and the page
 ```
 

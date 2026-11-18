@@ -1,60 +1,76 @@
-# Builds Khina the hedgehog in Blender, renders previews, and exports a .glb for the browser.
+# Builds Khina the bunny in Blender, renders previews, and exports a .glb for the browser.
 # Run: /Applications/Blender.app/Contents/MacOS/Blender --background --python art/khina.py
 # Outputs: art/khina.blend (editable), art/export/khina.glb, art/previews/khina-*.png
 #
-# The look is a needle-felted toy: a big dome of long banded spines, a white fluffy face with a
-# pointed tan snout, big glossy brown eyes in dark rims, brown felt ears and feet.
-# The browser grows short felt fuzz (shell layers) on every material whose name starts with
-# "Fur"; the vertex colour's alpha says how long the fuzz is there (0 next to the eyes and mouth).
+# The look is a needle-felted plush bunny: a head about as big as her chubby round body, long
+# upright ears with pink felt inside (her left ear has a soft bend at the tip), big glossy brown
+# eyes with a white shine, a tiny pink nose over two white muzzle puffs, round rosy cheeks, a
+# cotton-ball tail, snow-white fur with caramel just at the ear tips, and a small moss-green knitted scarf.
+# The browser grows short felt fuzz (shell layers) on every material whose name starts with "Fur";
+# the first UV channel's U says how long the fuzz is there (0 next to the eyes and the mouth).
 #
-# Khina faces -Y (Blender's front view) and is about 1.1 long and 0.8 tall with spines.
+# Khina faces -Y (Blender's front view; three.js +Z). About 0.95 long, 0.65 wide, 0.86 to the top of
+# her head and 1.25 to the tips of her ears.
 # Rigid parts on pivots, so the browser can animate without a skeleton:
-#   Khina (root, on the ground) > BodyPivot (body centre: rolls for curling, bobs for breathing)
-#   BodyPivot > HeadPivot (the neck: nods, sniffs, tucks in)
-#   Khina > Foot.FL / Foot.FR / Foot.BL / Foot.BR (each steps on its own for the waddle)
+#   Khina (root, on the ground) > BodyPivot (body centre: hops, sits up, breathes, loafs)
+#   BodyPivot > HeadPivot (the neck: nods, sniffs, looks) > Ear.L / Ear.R (ear roots: perk, lie back,
+#     bounce) and Nose (twitches; carries the muzzle and mouth)
+#   BodyPivot > Tail
+#   Khina > Foot.FL / Foot.FR (front paws), Foot.BL / Foot.BR (long back feet)
+#   Khina > Leg.FL / Leg.FR: short felt forelegs, which the browser stretches each frame from the paw up
+#     to her chest, so the front paws never float apart from her.
+#   EyeShut.L / EyeShut.R: closed-eye arcs, hidden by the browser except to blink and sleep.
+# Each ear (EarOuter.*, EarInner.*) has a "Lie" shape key: the ear curled toward its pink front, her
+# left one's bent tip straightened. The browser blends it in as she settles into a loaf, while it turns
+# each ear half round and lays it back, so the ears wrap her head with their cream backs up.
 
 import math
 import os
-import random
 
 import bmesh
 import bpy
 from mathutils import Matrix, Vector
-from mathutils.bvhtree import BVHTree
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-RNG = random.Random(7)
 
-# ---------- palette (sRGB hex), from the felt reference ----------
-CREAM = "ede2cf"  # face, cheeks, belly
-CREAM_SHADE = "dccdb6"
-MUZZLE = "a77a57"  # the snout darkens toward the nose
-MUZZLE_DARK = "74503b"
-RIM = "4b3325"  # felt ring around the eyes
-SKIN = "4a3527"  # under the spines
-SPINE_ROOT = "2c1e15"
-SPINE_BAND = "4a3324"
-SPINE_LIGHT = "cdb898"
-SPINE_TIP_DARK = "553a28"
-EAR = "7e5d48"
-EAR_INNER = "5f4334"
-NOSE = "3b2720"
-FEET = "7f604c"
-IRIS = "6b3f24"
-IRIS_EDGE = "2c1a11"
-PUPIL = "0d0807"
-SCLERA = "efe6da"
-MOUTH = "3a2a21"
+# ---------- palette (sRGB hex) ----------
+CREAM = "f8f1e6"  # main coat: soft cream-white
+CREAM_SHADE = "efe4d3"
+OAT = "f3e9dc"  # the faintest oatmeal on the back, the rump and the ear backs (she reads snow-white)
+CARAMEL = "cf9c68"  # warm touch: just the very tips of her ears
+CARAMEL_DARK = "b9844f"
+WHITE = "fffcf6"  # muzzle, chest, tail
+EAR_PINK = "f4b0b8"
+EAR_PINK_DEEP = "e896a4"
+BLUSH = "f6a0b0"
+NOSE = "ee8f9a"
+MOUTH = "6a4537"
+PUPIL = "0a0605"
+IRIS = "5a3720"
+IRIS_LIGHT = "8a5a36"
+EYE_DARK = "1b110c"
+SCARF = "5f8a3c"
+SCARF_DARK = "46702f"
+SCARF_STRIPE = "efe3c8"
+PAW = "f4ebdd"
 
 # ---------- shape ----------
-BODY_C = Vector((0.0, 0.10, 0.37))
-BODY_R = Vector((0.40, 0.46, 0.35))
-HEAD_C = Vector((0.0, -0.27, 0.36))
-HEAD_R = Vector((0.265, 0.25, 0.245))
-NECK = Vector((0.0, -0.12, 0.38))
-SNOUT_C = Vector((0.0, -0.53, 0.30))
-SNOUT_R = Vector((0.112, 0.17, 0.102))
-EYE_R = 0.067
+BODY_C = Vector((0.0, 0.09, 0.27))
+BODY_R = Vector((0.3, 0.31, 0.258))
+CHEST_C = Vector((0.0, -0.11, 0.33))
+CHEST_R = Vector((0.215, 0.2, 0.2))
+HEAD_C = Vector((0.0, -0.17, 0.605))
+HEAD_R = Vector((0.29, 0.255, 0.25))
+NECK = Vector((0.0, -0.06, 0.44))
+HAUNCH = [(Vector((0.165 * sx, 0.2, 0.17)), Vector((0.135, 0.19, 0.15))) for sx in (1, -1)]
+EAR_LEN = 0.42
+LEG_HALF = 0.09  # half the length of a foreleg at rest (the browser stretches it)
+EYE_DIR = {sx: Vector((0.46 * sx, -0.84, -0.06)).normalized() for sx in (1, -1)}
+# Eye radii (across, up, depth): wide and fairly flat, so the glossy lens sits just proud of the felt.
+EYE_R = (0.068, 0.076, 0.036)
+EYE_SINK = 0.027
+NOSE_C = HEAD_C + Vector((0.0, -0.243, -0.06))
+MUZZLE = {sx: (HEAD_C + Vector((0.04 * sx, -0.222, -0.108)), Vector((0.05, 0.04, 0.04))) for sx in (1, -1)}
 
 
 def srgb(hex_, a=1.0):
@@ -80,12 +96,16 @@ def with_alpha(c, a):
     return (c[0], c[1], c[2], a)
 
 
+def noise(p):
+    return (math.sin(p.x * 11 + 1.3) * math.sin(p.y * 9 + 0.4) * math.sin(p.z * 10 + 2.1) + 0.5 * math.sin(p.x * 23 - p.z * 17 + p.y * 19)) / 1.5
+
+
 def reset():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     return bpy.context.scene
 
 
-def material(name, base, rough=0.7, vertex_colors=False, sheen=0.0, emission=0.0, coat=0.0):
+def material(name, base, rough=0.8, vertex_colors=False, sheen=0.0, emission=0.0, coat=0.0):
     m = bpy.data.materials.new(name)
     try:
         m.use_nodes = True
@@ -137,18 +157,21 @@ def obj_from_bmesh(name, bm, mat, parent=None, smooth_shade=True):
     return ob
 
 
-def sphere_bm(segments=48, rings=32):
+def sphere_bm(segments=40, rings=24):
     bm = bmesh.new()
     bmesh.ops.create_uvsphere(bm, u_segments=segments, v_segments=rings, radius=1.0)
     return bm
 
 
-def ellipsoid(name, center, radii, mat, parent=None, segments=40, rings=24, rotate=None):
+def ellipsoid(name, center, radii, mat, parent=None, segments=40, rings=24, rotate=None, warp=None):
     bm = sphere_bm(segments, rings)
     m = Matrix.Diagonal((*radii, 1.0))
     if rotate is not None:
         m = rotate @ m
     bmesh.ops.transform(bm, matrix=Matrix.Translation(Vector(center)) @ m, verts=bm.verts)
+    if warp is not None:
+        for v in bm.verts:
+            v.co = warp(v.co)
     return obj_from_bmesh(name, bm, mat, parent)
 
 
@@ -168,7 +191,7 @@ def paint(ob, color_of):
 
 def empty(name, world_location, parent=None):
     e = bpy.data.objects.new(name, None)
-    e.empty_display_size = 0.1
+    e.empty_display_size = 0.08
     bpy.context.collection.objects.link(e)
     if parent is not None:
         e.parent = parent
@@ -183,299 +206,481 @@ def facing(direction):
     return Vector(direction).normalized().to_track_quat("Z", "Y").to_matrix().to_4x4()
 
 
-def on_ellipsoid(center, radii, direction):
-    d = Vector(direction).normalized()
-    t = 1.0 / math.sqrt((d.x / radii.x) ** 2 + (d.y / radii.y) ** 2 + (d.z / radii.z) ** 2)
-    return center + d * t
+def surface(c, r, d, out=0.0):
+    """The point on an ellipsoid (centre c, radii r) in direction d, pushed out by `out`."""
+    d = Vector(d).normalized()
+    q = Vector((d.x / r[0], d.y / r[1], d.z / r[2]))
+    return Vector(c) + d * (1.0 / q.length + out)
 
 
-# ---------- where things are ----------
-def eye_center(sx):
-    d = Vector((0.56 * sx, -0.80, 0.17))
-    return on_ellipsoid(HEAD_C, HEAD_R, d) - d.normalized() * 0.026, d.normalized()
+def exit_dist(o, d, c, r):
+    """How far along the ray o + t d (o inside the ellipsoid) it leaves the ellipsoid; 0 if o is outside."""
+    oc = Vector(((o.x - c.x) / r.x, (o.y - c.y) / r.y, (o.z - c.z) / r.z))
+    dd = Vector((d.x / r.x, d.y / r.y, d.z / r.z))
+    a = dd.dot(dd)
+    b = 2 * oc.dot(dd)
+    cc = oc.dot(oc) - 1
+    disc = b * b - 4 * a * cc
+    if disc < 0:
+        return 0.0
+    return max(0.0, (-b + math.sqrt(disc)) / (2 * a))
 
 
-EYES = [eye_center(1), eye_center(-1)]
+TORSO = [(BODY_C, BODY_R), (CHEST_C, CHEST_R), (HEAD_C, HEAD_R)]
 
 
-def body_q(p):
-    return Vector(((p.x - BODY_C.x) / BODY_R.x, (p.y - BODY_C.y) / BODY_R.y, (p.z - BODY_C.z) / BODY_R.z))
+def on_torso(origin, d, out=0.0):
+    """Where a ray from inside Khina leaves her body, chest and head together, pushed out by `out`."""
+    d = Vector(d).normalized()
+    t = max(exit_dist(origin, d, c, r) for c, r in TORSO)
+    return origin + d * (t + out)
 
 
-def body_spiny(p):
-    """How far into the spiny mantle a body point is (>0 inside). The edge runs from high at the
-    front down to low at the back, like the felt toy's skirt."""
-    q = body_q(p)
-    edge = -0.02 - 0.42 * (q.y + 1) / 2
-    return q.z - edge
+# The scarf's ring round the neck (low under the chin, high behind the head), worked out first so the
+# fuzz can be kept short where it lies.
+SCARF_AXIS = Vector((0.0, -0.1, 0.0))
+SCARF_OUT = 0.03
 
 
-def head_spiny(p):
-    d = (p - HEAD_C).normalized()
-    return d.z * 0.95 + d.y * 0.8 - 0.3
+def scarf_at(a, out=SCARF_OUT):
+    """A point on the scarf ring; a = 0 at the front, going round to her left."""
+    z = 0.455 - 0.088 * math.cos(a)
+    return on_torso(Vector((SCARF_AXIS.x, SCARF_AXIS.y, z)), Vector((math.sin(a), -math.cos(a), 0.0)), out)
 
 
-# ---------- spines ----------
-def fibonacci(n):
-    golden = math.pi * (3 - math.sqrt(5))
-    for i in range(n):
-        z = 1 - 2 * (i + 0.5) / n
-        r = math.sqrt(1 - z * z)
-        a = i * golden
-        yield Vector((math.cos(a) * r, math.sin(a) * r, z))
+SCARF_PTS = [scarf_at(2 * math.pi * k / 48) for k in range(48)]
+SCARF_KNOT_A = math.radians(46)
+SCARF_KNOT = scarf_at(SCARF_KNOT_A, 0.055)
 
 
-def add_spine(bm, cols, base, normal, sweep, length, radius, tilt_deg, palette, sides=4):
-    t = sweep - normal * sweep.dot(normal)
-    t = t.normalized() if t.length > 1e-4 else normal.orthogonal().normalized()
-    side = normal.cross(t)
-    jitter = math.radians(RNG.uniform(-20, 20))
-    t = (t * math.cos(jitter) + side * math.sin(jitter)).normalized()
-    tilt = math.radians(tilt_deg)
-    d = (normal * math.cos(tilt) + t * math.sin(tilt)).normalized()
-    u = d.orthogonal().normalized()
-    v = d.cross(u)
-    b = base - normal * 0.02
+def scarf_end_pts():
+    """The hanging end: from the knot down over her chest."""
+    end = [SCARF_KNOT + Vector((0.0, -0.012, -0.02))]
+    for j in range(1, 9):
+        t = j / 8
+        a = SCARF_KNOT_A - math.radians(8) * t
+        o = Vector((SCARF_AXIS.x, SCARF_AXIS.y + 0.04, SCARF_KNOT.z - 0.03 - 0.2 * t))
+        end.append(on_torso(o, Vector((math.sin(a), -math.cos(a), 0.1)), 0.034 + 0.008 * t))
+    return end
+
+
+SCARF_END = scarf_end_pts()
+
+
+def near_scarf(p):
+    return min(min((p - q).length for q in SCARF_PTS), min((p - q).length for q in SCARF_END) + 0.01)
+
+
+def scarf_fuzz(p):
+    """Fuzz length on the fur next to the scarf: short, so the knit shows."""
+    return smooth(0.03, 0.085, near_scarf(p))
+
+
+def tube(name, points, radius, mat, parent, sides=8, radii=None, closed=False, ring_warp=None):
+    """A round tube through points; radii (one per point) make it fat in places. ring_warp(i, k, offset)
+    can reshape each ring (a flattened ribbon, knitted ribs)."""
+    pts = [Vector(p) for p in points]
+    bm = bmesh.new()
     rings = []
-    roll = RNG.uniform(0, math.pi)
-    # The spine bends a little toward the body as it goes, like real quills lying in a coat.
-    for at, r_scale, c in ((0.0, 1.0, palette[0]), (0.42, 0.85, palette[1]), (0.78, 0.55, palette[2])):
+    n = len(pts)
+    prev_u = None
+    for i, p in enumerate(pts):
+        if closed:
+            a, b = pts[(i - 1) % n], pts[(i + 1) % n]
+        else:
+            a, b = pts[max(0, i - 1)], pts[min(n - 1, i + 1)]
+        d = (b - a).normalized()
+        # Carry the side vector along the tube so rings don't twist.
+        u = (prev_u - d * prev_u.dot(d)).normalized() if prev_u is not None else d.orthogonal().normalized()
+        prev_u = u
+        v = d.cross(u)
+        r = radii[i] if radii else radius * (0.55 if not closed and i in (0, n - 1) else 1.0)
         ring = []
-        sag = -normal * (length * 0.06 * at * at)
         for k in range(sides):
-            a = roll + 2 * math.pi * k / sides
-            ring.append(bm.verts.new(b + d * (length * at) + sag + (u * math.cos(a) + v * math.sin(a)) * radius * r_scale))
-            cols.append(c)
+            ang = 2 * math.pi * k / sides
+            off = (u * math.cos(ang) + v * math.sin(ang)) * r
+            if ring_warp is not None:
+                off = ring_warp(i, k, off, u, v, d)
+            ring.append(bm.verts.new(p + off))
         rings.append(ring)
-    tip = bm.verts.new(b + d * length - normal * (length * 0.06))
-    cols.append(palette[3])
-    for lo, hi in zip(rings, rings[1:]):
+    pairs = list(zip(rings, rings[1:] + ([rings[0]] if closed else [])))
+    for r0, r1 in pairs:
+        best = min(range(sides), key=lambda s: sum((r0[k].co - r1[(k + s) % sides].co).length for k in range(sides)))
         for k in range(sides):
             k2 = (k + 1) % sides
-            bm.faces.new((lo[k], lo[k2], hi[k2], hi[k]))
-    hi = rings[-1]
-    for k in range(sides):
-        bm.faces.new((hi[k], hi[(k + 1) % sides], tip))
+            bm.faces.new((r0[k], r0[k2], r1[(k2 + best) % sides], r1[(k + best) % sides]))
+    if not closed:
+        for ring, flip in ((rings[0], True), (rings[-1], False)):
+            bm.faces.new(list(reversed(ring)) if flip else ring)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    return obj_from_bmesh(name, bm, mat, parent)
 
 
-def spine_palette():
-    root, band, light, tip_dark = srgb(SPINE_ROOT), srgb(SPINE_BAND), srgb(SPINE_LIGHT), srgb(SPINE_TIP_DARK)
-    r = RNG.random()
-    if r < 0.1:  # a pale quill
-        light2 = mix(light, srgb("efe4d0"), RNG.uniform(0, 1))
-        return (mix(root, band, 0.6), mix(band, light, 0.5), light2, light2)
-    band2 = mix(root, band, RNG.uniform(0.3, 1.0))
-    if RNG.random() < 0.45:  # dark all the way
-        return (root, band2, mix(band2, light, RNG.uniform(0.0, 0.25)), mix(tip_dark, band2, RNG.uniform(0, 1)))
-    light2 = mix(light, band, RNG.uniform(0.0, 0.3))
-    tip = light2 if RNG.random() < 0.6 else mix(tip_dark, light, RNG.uniform(0, 0.3))
-    return (root, band2, light2, tip)
+# ---------- colouring ----------
+def q_of(p, c, r):
+    return Vector(((p.x - c.x) / r.x, (p.y - c.y) / r.y, (p.z - c.z) / r.z))
 
 
-def spines(name, mat, parent, points):
-    bm = bmesh.new()
-    cols = []
-    for p, n, sweep, length, tilt in points:
-        add_spine(bm, cols, p, n, sweep, length, RNG.uniform(0.0105, 0.0135) * (0.8 + 0.4 * length / 0.2), tilt, spine_palette())
-    ob = obj_from_bmesh(name, bm, mat, parent)
-    attr = ob.data.color_attributes.new("Col", "FLOAT_COLOR", "POINT")
-    for i, c in enumerate(cols):
-        attr.data[i].color = c
-    ob.data.color_attributes.active_color = attr
-    return ob
+def coat_color(p):
+    """Cream-white all over, oatmeal along the back and over the rump, white on the chest and belly."""
+    q = q_of(p, BODY_C, BODY_R)
+    c = mix(srgb(CREAM), srgb(CREAM_SHADE), 0.35 * smooth(-0.2, 0.4, noise(p * 1.4)))
+    back = smooth(-0.35, 0.55, q.y) * smooth(-0.15, 0.65, q.z)
+    c = mix(c, srgb(OAT), back * (0.6 + 0.2 * smooth(-0.4, 0.4, noise(p * 0.9))))
+    chest = smooth(-0.1, -0.75, q.y) * smooth(0.5, -0.1, q.z)
+    belly = smooth(-0.35, -0.8, q.z)
+    return mix(c, srgb(WHITE), max(chest, belly) * 0.85)
 
 
-# ---------- build ----------
+def head_color(p, n):
+    d = (p - HEAD_C).normalized()
+    c = mix(srgb(CREAM), srgb(CREAM_SHADE), 0.3 * smooth(-0.2, 0.4, noise(p * 1.6)))
+    # No crown patch: in the village's green light any tan on her head read as dust on a white bunny.
+    c = mix(c, srgb(OAT), smooth(0.2, 0.75, d.y) * smooth(-0.3, 0.4, d.z) * 0.5)
+    # White muzzle and chin.
+    muzzle = smooth(-0.6, -0.92, d.y) * smooth(0.12, -0.3, d.z)
+    chin = smooth(-0.35, -0.8, d.z)
+    c = mix(c, srgb(WHITE), max(muzzle, chin) * 0.9)
+    fuzz = 1.0
+    for sx, e in EYE_DIR.items():
+        # A faint warm ring round each eye, and a round rosy patch on the cheek below and outside it
+        # (a tight edge, so in shade it stays a pink felt circle and not a smudge).
+        ring = smooth(0.9, 0.955, d.dot(e)) * (1 - smooth(0.975, 0.985, d.dot(e)))
+        c = mix(c, srgb(OAT), ring * 0.5)
+        cheek = Vector((0.66 * sx, -0.62, -0.42)).normalized()
+        c = mix(c, srgb(BLUSH), smooth(0.9, 0.98, d.dot(cheek)) * 0.65)
+        fuzz = min(fuzz, smooth(0.975, 0.93, d.dot(e)))
+    # Short fuzz round the nose and mouth so they stay crisp, and along the scarf.
+    fuzz = min(fuzz, 0.35 + 0.65 * smooth(0.04, 0.11, (p - (NOSE_C + Vector((0, 0, -0.04)))).length))
+    fuzz = min(fuzz, 0.15 + 0.85 * scarf_fuzz(p))
+    return with_alpha(c, fuzz)
+
+
+# ---------- parts ----------
+def ear_shape(L, half_w, half_t, cup, bend_axis, bend_deg, bend_from, segments=32, rings=24):
+    """A long felt ear along local +Z (root at the origin): narrow at the root, widest two-thirds up,
+    a rounded tip, the front (-Y) cupped in; past `bend_from` (0..1) it curls by up to `bend_deg`."""
+    bm = sphere_bm(segments, rings)
+    zb = bend_from * L
+    for v in bm.verts:
+        x, y, z = v.co
+        t = (z + 1) / 2  # 0 at the root, 1 at the tip
+        w = half_w * (0.62 + 0.5 * t - 0.18 * t * t)
+        px = x * w
+        py = y * half_t
+        if y < 0:  # the cup
+            py += cup * (1 - min(1.0, x * x)) * math.sin(math.pi * min(1.0, t * 1.1)) * 0.9
+        pz = t * L
+        p = Vector((px, py, pz))
+        if bend_deg and pz > zb:
+            k = (pz - zb) / (L - zb)
+            ang = math.radians(bend_deg) * k * (0.6 + 0.4 * k)
+            pivot = Vector((0, 0, zb))
+            p = pivot + Matrix.Rotation(ang, 3, bend_axis) @ (p - pivot)
+        v.co = p
+    return bm
+
+
+def ear_lie_field(L, start=0.1, ramp=0.3, total=1.6, steps=240):
+    """The ear's centre line when it lies back: straight up to start*L, then curling toward the ear's
+    own front (-Y, the pink side) ever more, by `total` radians at the tip. The browser turns the ear
+    half round on its long axis as it lays it back, so the front faces her head: the ear then wraps the
+    round of her head pink side in, with its cream back up, as a real rabbit's does.
+    Returns a function from an unbent ear-local point to where it goes."""
+    top = L * 1.1
+    dz = top / steps
+    k_max = total / (L * (1 - start - ramp / 2))
+    table = []
+    phi, c = 0.0, Vector((0.0, 0.0, 0.0))
+    for i in range(steps + 1):
+        z = i * dz
+        table.append((phi, c.copy()))
+        k = k_max * smooth(start * L, (start + ramp) * L, z)
+        c += Vector((0.0, -math.sin(phi), math.cos(phi))) * dz
+        phi += k * dz
+
+    def at(p):
+        f = min(steps - 1e-6, max(0.0, p.z / dz))
+        i = int(f)
+        t = f - i
+        (p0, c0), (p1, c1) = table[i], table[i + 1]
+        phi_ = p0 + (p1 - p0) * t
+        cc = c0.lerp(c1, t)
+        return cc + Vector((p.x, 0.0, 0.0)) + Vector((0.0, math.cos(phi_), math.sin(phi_))) * p.y
+
+    return at
+
+
+def add_shape_key(ob, name, world_pts):
+    """A shape key from points in world coordinates, one per vertex in the mesh's own order."""
+    off = world_of(ob.parent) if ob.parent is not None else Vector((0, 0, 0))
+    if ob.data.shape_keys is None:
+        ob.shape_key_add(name="Basis", from_mix=False)
+    key = ob.shape_key_add(name=name, from_mix=False)
+    for i, p in enumerate(world_pts):
+        key.data[i].co = p - off
+    return key
+
+
 def build():
-    fur = material("Fur", CREAM, rough=0.95, vertex_colors=True, sheen=0.6)
-    ear_m = material("Fur.Ear", EAR, rough=0.95, vertex_colors=True, sheen=0.5)
-    nose_m = material("Fur.Nose", NOSE, rough=0.7, sheen=0.3)
-    feet_m = material("Fur.Feet", FEET, rough=0.95, sheen=0.4)
-    spine_m = material("Spines", SPINE_BAND, rough=0.5, vertex_colors=True)
-    eye_m = material("Eye", PUPIL, rough=0.04, vertex_colors=True, coat=1.0)
-    shine_m = material("Shine", "ffffff", rough=0.2, emission=2.0)
+    fur = material("Fur", CREAM, rough=0.92, vertex_colors=True, sheen=0.6)
+    ear_m = material("Fur.Ear", OAT, rough=0.92, vertex_colors=True, sheen=0.5)
+    pink_m = material("Fur.Pink", EAR_PINK, rough=0.9, vertex_colors=True, sheen=0.4)
+    white_m = material("Fur.White", WHITE, rough=0.9, vertex_colors=True, sheen=0.5)
+    feet_m = material("Fur.Feet", PAW, rough=0.92, vertex_colors=True, sheen=0.4)
+    nose_m = material("Fur.Nose", NOSE, rough=0.6, sheen=0.3)
+    scarf_m = material("Fur.Scarf", SCARF, rough=0.95, vertex_colors=True, sheen=0.3)
+    eye_m = material("Eye", EYE_DARK, rough=0.04, vertex_colors=True, coat=1.0)
+    # Under the browser's bloom threshold (0.92), so the catch-lights stay crisp dots and don't halo.
+    shine_m = material("Shine", "ffffff", rough=0.2, emission=0.9)
     mouth_m = material("Mouth", MOUTH, rough=0.8)
 
     root = empty("Khina", (0, 0, 0))
     body_pivot = empty("BodyPivot", BODY_C, root)
     head_pivot = empty("HeadPivot", NECK, body_pivot)
 
-    cream, shade, skin = srgb(CREAM), srgb(CREAM_SHADE), srgb(SKIN)
+    # Body: a chubby round loaf, flat underneath, fuller low down.
+    def body_warp(co):
+        dz = (co.z - BODY_C.z) / BODY_R.z
+        k = 1 + 0.08 * smooth(0.3, -0.7, dz)
+        return Vector((co.x * k, BODY_C.y + (co.y - BODY_C.y) * k, max(co.z, 0.03)))
 
-    # Body: a soft loaf, a little flatter underneath.
-    bm = sphere_bm(56, 36)
-    for v in bm.verts:
-        x, y, z = v.co
-        if z < 0:
-            z *= 0.82
-        v.co = BODY_C + Vector((x * BODY_R.x, y * BODY_R.y, z * BODY_R.z))
-    body = obj_from_bmesh("Body", bm, fur, body_pivot)
+    body = ellipsoid("Body", BODY_C, BODY_R, fur, body_pivot, segments=56, rings=36, warp=body_warp)
+    paint(body, lambda p, n: with_alpha(coat_color(p), 0.15 + 0.85 * scarf_fuzz(p)))
 
-    def body_color(p, n):
-        s = body_spiny(p)
-        if s > 0.02:
-            return with_alpha(skin, 0.45)
-        belly = mix(cream, shade, smooth(0.0, -0.6, body_q(p).z) * 0.6)
-        return with_alpha(mix(belly, skin, smooth(-0.12, 0.02, s)), 1.0)
+    # Chest: fills in under the chin so the head sits on the body like a plush toy's.
+    chest = ellipsoid("Chest", CHEST_C, CHEST_R, fur, body_pivot, segments=40, rings=24)
+    paint(chest, lambda p, n: with_alpha(mix(coat_color(p), srgb(WHITE), 0.7 * smooth(-0.2, -0.8, q_of(p, CHEST_C, CHEST_R).y)), 0.15 + 0.85 * scarf_fuzz(p)))
 
-    paint(body, body_color)
+    # Round haunches at the back.
+    for (c, r), side in zip(HAUNCH, ("L", "R")):
+        h = ellipsoid(f"Haunch.{side}", c, r, fur, body_pivot, segments=36, rings=22, warp=lambda co: Vector((co.x, co.y, max(co.z, 0.03))))
+        paint(h, lambda p, n, c=c: with_alpha(mix(coat_color(p), srgb(OAT), 0.35 * smooth(-0.2, 0.6, (p.y - c.y) / 0.19)), 1.0))
 
-    # Head: round, a bit wider at the cheeks.
-    bm = sphere_bm(64, 40)
-    for v in bm.verts:
-        x, y, z = v.co
-        cheek = 1 + 0.12 * smooth(0.4, -0.5, z) * smooth(0.2, -0.6, y)
-        v.co = HEAD_C + Vector((x * HEAD_R.x * cheek, y * HEAD_R.y, z * HEAD_R.z))
-    head = obj_from_bmesh("Head", bm, fur, head_pivot)
+    # Head: big and round, with chubby lower cheeks.
+    def head_warp(co):
+        dz = (co.z - HEAD_C.z) / HEAD_R.z
+        dy = (co.y - HEAD_C.y) / HEAD_R.y
+        k = 1 + 0.1 * smooth(0.35, -0.55, dz) * smooth(0.5, -0.4, dy)
+        return Vector((co.x * k, co.y, co.z))
 
-    def head_color(p, n):
-        s = head_spiny(p)
-        c = cream
-        d = (p - HEAD_C).normalized()
-        # Toward the snout the felt turns tan.
-        c = mix(c, srgb(MUZZLE), smooth(-0.55, -0.95, d.y) * smooth(0.45, 0.0, d.z) * 0.55)
-        fuzz = 1.0
-        for e, ed in EYES:
-            dist = (p - e).length
-            c = mix(c, srgb(RIM), smooth(EYE_R + 0.05, EYE_R + 0.012, dist))
-            fuzz = min(fuzz, smooth(EYE_R + 0.004, EYE_R + 0.04, dist))
-        if s > 0.0:
-            c = mix(c, skin, smooth(0.0, 0.08, s))
-            fuzz = min(fuzz, 0.5)
-        return with_alpha(c, fuzz)
-
+    head = ellipsoid("Head", HEAD_C, HEAD_R, fur, head_pivot, segments=64, rings=40, warp=head_warp)
     paint(head, head_color)
 
-    # Snout: tapers to a slightly upturned point.
-    bm = sphere_bm(48, 32)
-    for v in bm.verts:
-        x, y, z = v.co
-        f = min(1.0, max(0.0, (y + 1) / 2))  # 0 at the tip, 1 at the base
-        taper = 0.4 + 0.6 * f**0.55
-        v.co = SNOUT_C + Vector((x * SNOUT_R.x * taper, y * SNOUT_R.y, z * SNOUT_R.z * taper + 0.04 * (1 - f) ** 2))
-    snout_tree = BVHTree.FromBMesh(bm)
-    tip = SNOUT_C + Vector((0, -SNOUT_R.y, 0.04))
+    # Nose pivot: the twitchy bit, with the muzzle puffs and the mouth.
+    nose_pivot = empty("Nose", NOSE_C, head_pivot)
+    for sx, side in ((1, "L"), (-1, "R")):
+        mc, mr = MUZZLE[sx]
+        m = ellipsoid(f"Muzzle.{side}", mc, mr, white_m, nose_pivot, segments=28, rings=16)
+        paint(m, lambda p, n: with_alpha(srgb(WHITE), 0.45))
 
-    # A small smile along each side of the snout, laid onto its surface.
-    mouth_pts = []
-    for sx in (1, -1):
-        side = []
-        for k in range(9):
-            t = k / 8
-            target = Vector((sx * 0.072 * t, -0.672 + 0.115 * t, 0.272 - 0.012 * t + 0.03 * t**3))
-            axis = Vector((0, target.y, SNOUT_C.z + 0.01))
-            hit = snout_tree.ray_cast(axis, (target - axis).normalized(), 1.0)
-            if hit[0] is not None:
-                side.append(hit[0] + hit[1].normalized() * 0.003)
-        mouth_pts.append(side)
-    snout = obj_from_bmesh("Snout", bm, fur, head_pivot)
+    def nose_warp(co):
+        # Wider at the top, like a soft little triangle.
+        dz = (co.z - NOSE_C.z) / 0.02
+        k = 1 + 0.38 * dz
+        return Vector((NOSE_C.x + (co.x - NOSE_C.x) * k, co.y, co.z))
 
-    def snout_color(p, n):
-        f = smooth(SNOUT_C.y + SNOUT_R.y, SNOUT_C.y - SNOUT_R.y, p.y)  # 0 at the base, 1 at the tip
-        c = mix(mix(cream, srgb(MUZZLE), f * 1.5), srgb(MUZZLE_DARK), smooth(0.65, 1.0, f) * 0.8)
-        fuzz = 0.75 - 0.4 * f
-        for side in mouth_pts:
-            for q in side:
-                fuzz = min(fuzz, smooth(0.008, 0.03, (p - q).length) * fuzz)
-        return with_alpha(c, fuzz)
+    ellipsoid("NoseTip", NOSE_C, (0.027, 0.017, 0.019), nose_m, nose_pivot, segments=20, rings=12, warp=nose_warp)
 
-    paint(snout, snout_color)
-    ellipsoid("Nose", tip + Vector((0, 0.008, 0.002)), (0.046, 0.04, 0.04), nose_m, head_pivot, segments=28, rings=18)
+    def on_muzzle(x, z):
+        best = None
+        for sx in (1, -1):
+            mc, mr = MUZZLE[sx]
+            t = 1 - ((x - mc.x) / mr.x) ** 2 - ((z - mc.z) / mr.z) ** 2
+            if t > 0:
+                y = mc.y - mr.y * math.sqrt(t)
+                best = y if best is None else min(best, y)
+        y = best if best is not None else HEAD_C.y - 0.24
+        return Vector((x, y - 0.004, z))
 
-    for side in mouth_pts:
-        if len(side) < 3:
-            continue
-        bm = bmesh.new()
-        prev = None
-        for i, q in enumerate(side):
-            a = side[min(i + 1, len(side) - 1)] - side[max(i - 1, 0)]
-            r = 0.0055 * (1 - 0.5 * (i / (len(side) - 1)))
-            res = bmesh.ops.create_circle(bm, cap_ends=False, segments=6, radius=r, matrix=Matrix.Translation(q) @ facing(a))
-            ring = res["verts"]
-            if prev is not None:
-                for k in range(6):
-                    bm.faces.new((prev[k], prev[(k + 1) % 6], ring[(k + 1) % 6], ring[k]))
-            prev = ring
-        obj_from_bmesh("Mouth", bm, mouth_m, head_pivot)
+    philtrum = [on_muzzle(0, NOSE_C.z - 0.016 - k * 0.007) for k in range(4)]
+    tube("Mouth.Mid", philtrum, 0.004, mouth_m, nose_pivot, sides=6)
+    for side, sx in (("L", 1), ("R", -1)):
+        pts = []
+        for k in range(7):
+            t = k / 6
+            a = math.pi * (1.05 + 0.75 * t)
+            x = sx * (0.02 + 0.02 * math.cos(a))
+            z = NOSE_C.z - 0.037 + 0.016 * math.sin(a) + 0.004 * t
+            pts.append(on_muzzle(x, z))
+        tube(f"Mouth.{side}", pts, 0.004, mouth_m, nose_pivot, sides=6)
 
-    # Eyes: big glossy brown eyes with a lighter iris ring, a white lower rim and catch-lights.
-    pupil, iris, iris_edge, sclera = srgb(PUPIL), srgb(IRIS), srgb(IRIS_EDGE), srgb(SCLERA)
-    for (c, d), side, sx in zip(EYES, ("L", "R"), (1, -1)):
-        look = (d + Vector((-0.18 * sx, -0.25, 0.05))).normalized()  # looking a touch forward
-        eye = ellipsoid(f"Eye.{side}", c, (EYE_R, EYE_R, EYE_R * 1.04), eye_m, head_pivot, segments=96, rings=64)
+    # Eyes: big, low and wide, glossy dark with a warm iris and two catch-lights.
+    for side, sx in (("L", 1), ("R", -1)):
+        d = EYE_DIR[sx]
+        c = surface(HEAD_C, HEAD_R, d, -EYE_SINK)
+        eye_rot = facing(d)
+        eye = ellipsoid(f"Eye.{side}", c, EYE_R, eye_m, head_pivot, segments=48, rings=40, rotate=eye_rot)
+        up = Vector((0, 0, 1))
+        side_v = d.cross(up).normalized()  # points to her outside (+X for the left eye)
+        rot3 = eye_rot.to_3x3()
+        ex, ey = rot3 @ Vector((1, 0, 0)), rot3 @ Vector((0, 1, 0))
 
-        def eye_color(p, n, c=c, look=look):
-            q = (p - c).normalized()
-            a = math.degrees(q.angle(look))
-            if a < 15:
-                return pupil
-            if a < 34:
-                return mix(mix(srgb("9a6238"), iris, smooth(15, 24, a)), iris_edge, smooth(26, 34, a))
-            if 34 <= a < 43 and q.z < -0.35:
-                return mix(sclera, iris_edge, smooth(39, 43, a) + smooth(-0.5, -0.35, q.z))
-            return iris_edge
+        def eye_color(p, n, c=c, ex=ex, ey=ey):
+            # By how far out from the middle of the lens (0 at the centre, 1 at its rim; about 0.8
+            # shows past the felt): a big dark pupil, a warm brown iris ring lighter at the bottom,
+            # and a dark rim.
+            q = p - c
+            r = math.hypot(q.dot(ex) / EYE_R[0], q.dot(ey) / EYE_R[1])
+            if r < 0.4:
+                return srgb(PUPIL)
+            below = smooth(0.1, -0.7, q.dot(ey) / EYE_R[1])
+            iris = mix(srgb(IRIS), srgb(IRIS_LIGHT), below)
+            iris = mix(srgb(PUPIL), iris, smooth(0.4, 0.46, r))
+            return mix(iris, srgb(EYE_DARK), smooth(0.66, 0.74, r))
 
         paint(eye, eye_color)
-        up = Vector((0, 0, 1))
-        ellipsoid(f"Shine.{side}", c + look * (EYE_R - 0.004) + up * 0.022 + Vector((0.012 * sx, 0, 0)), (0.014, 0.014, 0.014), shine_m, head_pivot, segments=12, rings=8)
-        ellipsoid(f"Shine2.{side}", c + look * (EYE_R - 0.003) - up * 0.018 - Vector((0.014 * sx, 0, 0)), (0.006, 0.006, 0.006), shine_m, head_pivot, segments=10, rings=6)
 
-        # Ears: round felt cups at the edge of the spines, open toward the front.
-        de = Vector((0.78 * sx, -0.02, 0.62))
-        ec = on_ellipsoid(HEAD_C, HEAD_R, de) + de.normalized() * 0.01
-        face = Vector((0.55 * sx, -1.0, 0.25)).normalized()
-        bm = sphere_bm(32, 20)
-        for v in bm.verts:
-            x, y, z = v.co
-            # A cup: the front face is pushed in.
-            if z > 0:
-                z -= 0.55 * z * (1 - (x * x + y * y))
-            v.co = Vector((x * 0.088, y * 0.094, z * 0.034))
-        bmesh.ops.transform(bm, matrix=Matrix.Translation(ec) @ facing(face), verts=bm.verts)
-        ear = obj_from_bmesh(f"Ear.{side}", bm, ear_m, head_pivot)
-        paint(ear, lambda p, n, face=face, ec=ec: with_alpha(mix(srgb(EAR), srgb(EAR_INNER), smooth(0.2, 0.7, n.dot(face)) * smooth(0.09, 0.03, (p - ec).length)), 0.6))
+        def on_eye(offset):
+            """The point on the eye's glossy front at this sideways offset, and the outward normal there."""
+            lx, ly = offset.dot(ex), offset.dot(ey)
+            q = max(0.0, 1 - (lx / EYE_R[0]) ** 2 - (ly / EYE_R[1]) ** 2)
+            lz = EYE_R[2] * math.sqrt(q)
+            n = (rot3 @ Vector((lx / EYE_R[0] ** 2, ly / EYE_R[1] ** 2, lz / EYE_R[2] ** 2))).normalized()
+            return c + rot3 @ Vector((lx, ly, lz)), n
 
-    # Spines on the body: dense, long, swept back and down.
-    pts = []
-    for s in fibonacci(12000):
-        p = BODY_C + Vector((s.x * BODY_R.x, s.y * BODY_R.y, s.z * BODY_R.z))
-        sp = body_spiny(p)
-        if sp < 0:
-            continue
-        if ((p - HEAD_C).x / HEAD_R.x) ** 2 + ((p - HEAD_C).y / HEAD_R.y) ** 2 + ((p - HEAD_C).z / HEAD_R.z) ** 2 < 1.15:
-            continue
-        n = Vector((s.x / BODY_R.x, s.y / BODY_R.y, s.z / BODY_R.z)).normalized()
-        edge = smooth(0.0, 0.35, sp)  # shorter and more splayed at the skirt
-        length = RNG.uniform(0.17, 0.235) * (0.6 + 0.4 * edge)
-        tilt = RNG.uniform(58, 74) - 8 * (1 - edge)
-        pts.append((p, n, Vector((0, 1, -0.35)), length, tilt))
-    spines("BodySpines", spine_m, body_pivot, pts)
+        # Two catch-lights lying on the lens (thin, so they never stand off it).
+        for name, offset, r in ((f"Shine.{side}", up * 0.026 + side_v * (0.017 * sx), (0.018, 0.018, 0.004)), (f"Shine2.{side}", -up * 0.022 - side_v * (0.016 * sx), (0.008, 0.008, 0.003))):
+            at, n = on_eye(offset)
+            ellipsoid(name, at - n * 0.0015, r, shine_m, head_pivot, segments=14, rings=8, rotate=facing(n))
 
-    # And on the crown of the head, ending in a fringe above the eyes and between the ears.
-    pts = []
-    for s in fibonacci(4200):
-        p = HEAD_C + Vector((s.x * HEAD_R.x, s.y * HEAD_R.y, s.z * HEAD_R.z))
-        sp = head_spiny(p)
-        if sp < 0:
-            continue
-        if any(((p - (on_ellipsoid(HEAD_C, HEAD_R, Vector((0.78 * sx, -0.02, 0.62))))).length < 0.075) for sx in (1, -1)):
-            continue
-        n = Vector((s.x / HEAD_R.x, s.y / HEAD_R.y, s.z / HEAD_R.z)).normalized()
-        edge = smooth(0.0, 0.3, sp)
-        length = RNG.uniform(0.11, 0.16) * (0.65 + 0.35 * edge)
-        pts.append((p, n, Vector((0, 1, 0.25)), length, RNG.uniform(60, 74)))
-    spines("HeadSpines", spine_m, head_pivot, pts)
+        # Closed eye: a soft downward arc on the fur, for blinking and sleeping (hidden by the browser).
+        pts = []
+        for k in range(9):
+            t = k / 8 * 2 - 1
+            dd = (d + side_v * (t * 0.2 * sx) + up * (-0.05 - 0.05 * (1 - t * t))).normalized()
+            pts.append(surface(HEAD_C, HEAD_R, dd, 0.004))
+        tube(f"EyeShut.{side}", pts, 0.0065, mouth_m, head_pivot, sides=6)
 
-    # Feet: little brown paws peeking out, with three toe bumps each.
-    for name, x, y in (("Foot.FL", 0.15, -0.28), ("Foot.FR", -0.15, -0.28), ("Foot.BL", 0.2, 0.34), ("Foot.BR", -0.2, 0.34)):
-        bm = sphere_bm(24, 14)
-        bmesh.ops.transform(bm, matrix=Matrix.Translation((x, y, 0.045)) @ Matrix.Diagonal((0.065, 0.085, 0.048, 1)), verts=bm.verts)
-        for k in (-1, 0, 1):
-            toe = Matrix.Translation((x + k * 0.032, y - 0.075 + abs(k) * 0.012, 0.022)) @ Matrix.Diagonal((0.019, 0.022, 0.018, 1))
-            bmesh.ops.create_uvsphere(bm, u_segments=12, v_segments=8, radius=1.0, matrix=toe)
-        obj_from_bmesh(name, bm, feet_m, root)
+    # Ears: long and upright, a little splayed, pale pink inside; her left one bends softly at the tip.
+    for side, sx in (("L", 1), ("R", -1)):
+        root_dir = Vector((0.4 * sx, 0.2, 0.9)).normalized()
+        root_pt = surface(HEAD_C, HEAD_R, root_dir, -0.035)
+        ear_pivot = empty(f"Ear.{side}", root_pt, head_pivot)
+        rot = (Matrix.Rotation(math.radians(13) * sx, 4, "Y") @ Matrix.Rotation(math.radians(-7), 4, "X") @ Matrix.Rotation(math.radians(-14) * sx, 4, "Z"))
+        bend = (Vector((0.55, 0.0, 0.0)) + Vector((0.0, 0.8 * sx, 0.0))).normalized() if sx == 1 else Vector((1, 0, 0))
+        bend_deg = 62 if sx == 1 else 0
+        place = Matrix.Translation(root_pt) @ rot
+        bm = ear_shape(EAR_LEN, 0.072, 0.03, 0.02, bend, bend_deg, 0.56)
+        bmesh.ops.transform(bm, matrix=place, verts=bm.verts)
+        outer = obj_from_bmesh(f"EarOuter.{side}", bm, ear_m, ear_pivot)
+        inv = place.inverted()
+        # Lying back: the same ear, unbent, curled back along her head (vertices in the same order).
+        lie = ear_lie_field(EAR_LEN)
+        flat = ear_shape(EAR_LEN, 0.072, 0.03, 0.02, bend, 0, 0.56)
+        add_shape_key(outer, "Lie", [place @ lie(v.co) for v in flat.verts])
+        flat.free()
 
+        def ear_color(p, n, inv=inv):
+            local = inv @ p
+            t = local.z / EAR_LEN
+            # Cream backs (a step warmer up the ear), caramel only on the last few millimetres of the tip.
+            c = mix(srgb(CREAM), srgb(OAT), smooth(0.0, 0.45, t))
+            c = mix(c, srgb(CARAMEL), smooth(0.9, 0.99, t) * 0.7)
+            c = mix(c, srgb(CARAMEL_DARK), smooth(0.96, 1.0, t) * 0.3)
+            return with_alpha(c, 0.75)
+
+        paint(outer, ear_color)
+        bm = ear_shape(EAR_LEN * 0.84, 0.046, 0.01, 0.0, bend, bend_deg, 0.56 / 0.84 * 0.97, segments=24, rings=18)
+        # Sit the pink felt in the cup, a little up from the root.
+        bmesh.ops.transform(bm, matrix=place @ Matrix.Translation((0, -0.012, EAR_LEN * 0.07)), verts=bm.verts)
+        inner = obj_from_bmesh(f"EarInner.{side}", bm, pink_m, ear_pivot)
+        paint(inner, lambda p, n, inv=inv: with_alpha(mix(srgb(EAR_PINK), srgb(EAR_PINK_DEEP), smooth(0.25, 0.6, (inv @ p).z / EAR_LEN) * 0.5), 0.5))
+        flat = ear_shape(EAR_LEN * 0.84, 0.046, 0.01, 0.0, bend, 0, 0.56, segments=24, rings=18)
+        sit = Matrix.Translation((0, -0.012, EAR_LEN * 0.07))
+        add_shape_key(inner, "Lie", [place @ lie(sit @ v.co) for v in flat.verts])
+        flat.free()
+
+    # Cotton-ball tail, a little lumpy.
+    tail = empty("Tail", (0, 0.41, 0.22), body_pivot)
+    tc = Vector((0, 0.445, 0.235))
+    t = ellipsoid("TailPuff", tc, (0.085, 0.075, 0.08), white_m, tail, segments=28, rings=16, warp=lambda co: tc + (co - tc) * (1 + 0.1 * noise((co - tc) * 9)))
+    paint(t, lambda p, n: with_alpha(mix(srgb(WHITE), srgb(CREAM_SHADE), 0.3 * smooth(0.0, 0.5, noise(p * 7))), 1.0))
+
+    # Front paws: little mittens under the chest. Back feet: long and flat, out from the haunches.
+    for name, x in (("Foot.FL", 0.095), ("Foot.FR", -0.095)):
+        pivot = empty(name, (x, -0.23, 0.04), root)
+        f = ellipsoid(f"{name}.Mesh", (x, -0.235, 0.036), (0.05, 0.066, 0.038), feet_m, pivot, segments=24, rings=14)
+        paint(f, lambda p, n: with_alpha(srgb(PAW), 0.7))
+    # Forelegs: short felt sausages from each front paw up into her chest. Built standing on their
+    # pivot (LEG_HALF up and down from it); the browser aims and stretches them every frame.
+    for name, x in (("Leg.FL", 0.09), ("Leg.FR", -0.09)):
+        mid = Vector((x, -0.2, 0.15))
+        pivot = empty(name, mid, root)
+        leg = ellipsoid(f"{name}.Mesh", mid, (0.04, 0.043, LEG_HALF), feet_m, pivot, segments=20, rings=16)
+        paint(leg, lambda p, n: with_alpha(mix(srgb(PAW), srgb(WHITE), smooth(0.08, 0.2, p.z)), 0.7))
+    for name, x in (("Foot.BL", 0.2), ("Foot.BR", -0.2)):
+        pivot = empty(name, (x, 0.12, 0.035), root)
+        f = ellipsoid(f"{name}.Mesh", (x, 0.04, 0.034), (0.066, 0.155, 0.036), feet_m, pivot, segments=28, rings=14)
+        paint(f, lambda p, n: with_alpha(mix(srgb(PAW), srgb(OAT), smooth(0.03, 0.065, p.z) * smooth(-0.05, 0.12, p.y) * 0.6), 0.8))
+
+    # The scarf: a moss-green knitted ring round the neck, tied at her left with one end hanging.
+    build_scarf(scarf_m, head_pivot)
     return root
+
+
+def build_scarf(mat, parent):
+    """A moss-green knitted ring round the neck (on the head pivot, so it turns with her head), knotted
+    at her left with one striped end hanging over her chest."""
+    ox, oy = SCARF_AXIS.x, SCARF_AXIS.y
+    # Ribbed: every other column round the tube stands out, and each row bulges a little.
+    ring = tube("Scarf", SCARF_PTS, 0.042, mat, parent, sides=14, closed=True, ring_warp=lambda i, k, off, u, v, d: off * (1.08 if k % 2 == 0 else 0.92) * (1 + 0.07 * math.cos(i * math.pi)))
+    paint(ring, lambda p, n: with_alpha(mix(srgb(SCARF), srgb(SCARF_DARK), 0.35 * smooth(-0.3, 0.3, noise(p * 9))), 0.3))
+
+    # The knot, on her left at the front.
+    knot_at = SCARF_KNOT
+    k = ellipsoid("ScarfKnot", knot_at, (0.044, 0.038, 0.042), mat, parent, segments=20, rings=12, warp=lambda co: knot_at + (co - knot_at) * (1 + 0.08 * math.cos(9 * math.atan2(co.z - knot_at.z, co.x - knot_at.x))))
+    paint(k, lambda p, n: with_alpha(mix(srgb(SCARF), srgb(SCARF_DARK), 0.4), 0.4))
+
+    # One end hanging from the knot down over her chest: a flat knitted strip with two cream stripes.
+    end = SCARF_END
+
+    def flat(i, k, off, u, v, d):
+        # Flatten the tube against the chest: wide sideways, thin outward.
+        out = (end[i] - Vector((ox, oy + 0.04, end[i].z))).normalized()
+        out = (out - d * out.dot(d)).normalized()
+        along_out = out * off.dot(out)
+        return (off - along_out) * 1.3 + along_out * 0.32
+
+    strip = tube("ScarfEnd", end, 0.036, mat, parent, sides=12, ring_warp=flat)
+    bands = [(end[3].z, end[4].z), (end[6].z, end[7].z)]
+
+    def strip_color(p, n):
+        c = mix(srgb(SCARF), srgb(SCARF_DARK), 0.3 * smooth(-0.3, 0.3, noise(p * 9)))
+        if any(hi > p.z > lo for hi, lo in bands):
+            c = mix(c, srgb(SCARF_STRIPE), 0.85)
+        return with_alpha(c, 0.4)
+
+    paint(strip, strip_color)
+    # A little fringe at the bottom.
+    bottom = end[-1]
+    out = (bottom - Vector((ox, oy + 0.04, bottom.z))).normalized()
+    side = out.cross(Vector((0, 0, 1))).normalized()
+    for f in range(5):
+        s = (f - 2) * 0.016
+        a0 = bottom + side * s + Vector((0, 0, 0.005))
+        fr = tube(f"ScarfFringe.{f}", [a0, a0 + Vector((0, 0, -0.025)), a0 + out * 0.004 + Vector((0, 0, -0.045))], 0.0065, mat, parent, sides=6)
+        paint(fr, lambda p, n: with_alpha(srgb(SCARF), 0.3))
+
+
+def join(name, obs):
+    """One mesh from several on the same pivot with the same material (fewer draw calls)."""
+    bpy.ops.object.select_all(action="DESELECT")
+    for o in obs:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = obs[0]
+    bpy.ops.object.join()
+    obs[0].name = name
+    obs[0].data.name = name
+    return obs[0]
+
+
+def tidy():
+    by = lambda prefix: [o for o in bpy.data.objects if o.type == "MESH" and o.name.startswith(prefix)]
+    join("Body", by("Body") + by("Chest") + by("Haunch."))
+    join("Scarf", by("Scarf"))
+    join("Muzzle", by("Muzzle."))
+    join("Mouth", by("Mouth."))
 
 
 # ---------- preview ----------
@@ -493,12 +698,7 @@ def render_previews(scene):
             continue
     scene.render.resolution_x = 900
     scene.render.resolution_y = 900
-    for vt in ("AgX", "Filmic", "Standard"):
-        try:
-            scene.view_settings.view_transform = vt
-            break
-        except TypeError:
-            continue
+    scene.view_settings.view_transform = "Standard"
     world = bpy.data.worlds.new("World")
     scene.world = world
     try:
@@ -506,8 +706,8 @@ def render_previews(scene):
     except Exception:
         pass
     bg = world.node_tree.nodes.get("Background")
-    bg.inputs["Color"].default_value = srgb("efe6d8")
-    bg.inputs["Strength"].default_value = 1.0
+    bg.inputs["Color"].default_value = srgb("e6eadc")
+    bg.inputs["Strength"].default_value = 0.9
 
     sun = bpy.data.objects.new("Sun", bpy.data.lights.new("Sun", "SUN"))
     sun.data.energy = 3.0
@@ -515,7 +715,7 @@ def render_previews(scene):
     sun.rotation_euler = (math.radians(50), math.radians(10), math.radians(-35))
     scene.collection.objects.link(sun)
     fill = bpy.data.objects.new("Fill", bpy.data.lights.new("Fill", "AREA"))
-    fill.data.energy = 140
+    fill.data.energy = 90
     fill.data.size = 3
     fill.location = (-2.5, -2.5, 1.5)
     look_at(fill, (0, 0, 0.4))
@@ -527,7 +727,7 @@ def render_previews(scene):
     bm.to_mesh(ground)
     bm.free()
     g = bpy.data.objects.new("Ground", ground)
-    g.data.materials.append(material("GroundM", "e9e1d3", rough=1.0))
+    g.data.materials.append(material("GroundM", "b5cc98", rough=1.0))
     scene.collection.objects.link(g)
 
     cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam"))
@@ -537,12 +737,15 @@ def render_previews(scene):
     out = os.path.join(HERE, "previews")
     os.makedirs(out, exist_ok=True)
     views = {
-        "34": ((-2.3, -3.2, 1.25), (0, -0.08, 0.38)),
-        "front": ((0, -4.0, 0.8), (0, -0.1, 0.38)),
-        "side": ((4.0, -0.2, 0.7), (0, 0, 0.38)),
-        "back": ((-2.4, 3.6, 1.8), (0, 0, 0.38)),
+        "34": ((-2.3, -3.4, 1.5), (0, -0.05, 0.55)),
+        "front": ((0, -4.2, 0.9), (0, -0.1, 0.58)),
+        "side": ((4.2, -0.2, 0.8), (0, 0, 0.55)),
+        "back": ((-2.4, 3.6, 1.9), (0, 0, 0.55)),
     }
+    only = os.environ.get("VIEWS")
     for name, (loc, target) in views.items():
+        if only and name not in only.split(","):
+            continue
         cam.location = loc
         look_at(cam, target)
         scene.render.filepath = os.path.join(out, f"khina-{name}.png")
@@ -555,6 +758,7 @@ def render_previews(scene):
 def main():
     scene = reset()
     build()
+    tidy()
     os.makedirs(os.path.join(HERE, "export"), exist_ok=True)
     render_previews(scene)
     bpy.ops.export_scene.gltf(filepath=os.path.join(HERE, "export", "khina.glb"), export_format="GLB")

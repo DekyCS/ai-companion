@@ -3,7 +3,7 @@
 
 import type { Effects } from '../config.ts';
 import type { Rng } from '../rng.ts';
-import { pantryTotal, type Activity, type FoodId, type PieceForm, type State } from '../state.ts';
+import { FOOD_IDS, pantryTotal, type Activity, type FoodId, type PieceForm, type State } from '../state.ts';
 import { clock, hourOf, isDark, isNight, nextMorning } from '../time.ts';
 import type { PlaceId } from './places.ts';
 import { bakeryOpen, isWet, names, nextTrain, presentAt, verb, VILLAGERS, type VillagerId } from './village.ts';
@@ -33,9 +33,9 @@ export interface ActionDef {
   id: string;
   /** 'here' means wherever Khina already is. */
   place: PlaceId | 'here';
-  /** Shown in the menu: "forage for beetles and berries". */
+  /** Shown in the menu: "forage for clover and berries". */
   label: string;
-  /** Shown on the status line: "foraging for beetles and berries". */
+  /** Shown on the status line: "foraging in the woods". */
   doing: string;
   /** Used in summaries of recent activity: "foraging". */
   gist: string;
@@ -75,14 +75,14 @@ export interface ActionDef {
 
 const FOOD: Record<FoodId, { one: string; fullness: number }> = {
   berries: { one: 'a few dried blackberries', fullness: 14 },
-  beetles: { one: 'a dried beetle', fullness: 18 },
+  clover: { one: 'a bunch of dried clover', fullness: 18 },
   crusts: { one: 'a stale crust', fullness: 22 },
   peas: { one: 'a pea pod', fullness: 12 },
 };
 
 const FOOD_WORDS: Record<FoodId, [string, string]> = {
   berries: ['blackberry', 'blackberries'],
-  beetles: ['beetle', 'beetles'],
+  clover: ['bunch of clover', 'bunches of clover'],
   crusts: ['crust', 'crusts'],
   peas: ['pea pod', 'pea pods'],
 };
@@ -120,7 +120,7 @@ export const ACTIONS: ActionDef[] = [
     scoreMult: ({ at }) => (isNight(at) ? 3 : 1),
     begin: ({ rng }, act) => {
       // Going down after 18:00 counts as the night's sleep, so an evening collapse does not
-      // end in a hedgehog wide awake at midnight.
+      // end in a bunny wide awake at midnight.
       const h = hourOf(act.startedAt);
       if (h >= 18 || h < 6) act.wakeAfter = nextMorning(act.startedAt) + rng.int(0, 75);
     },
@@ -154,8 +154,8 @@ export const ACTIONS: ActionDef[] = [
       isNight(at) ? 'it was bedtime, not nap time' : s.needs.rest >= 60 ? 'Khina was not tired enough to nap' : null,
     outcome: ({ rng }) => ({
       text: rng.pick([
-        'napped in the armchair',
-        'napped in the armchair with one paw hanging off the side',
+        'flopped over on one side in the armchair and napped',
+        'napped in the armchair with one ear hanging off the side',
         'dozed in the armchair, never quite asleep',
       ]),
     }),
@@ -176,7 +176,7 @@ export const ACTIONS: ActionDef[] = [
       return n <= 2 ? `only ${n} thing${n === 1 ? '' : 's'} left in the pantry` : '';
     },
     outcome: ({ s, rng }) => {
-      const kinds = (Object.keys(s.pantry) as FoodId[]).filter((f) => s.pantry[f] > 0);
+      const kinds = FOOD_IDS.filter((f) => (s.pantry[f] ?? 0) > 0);
       const food = rng.weighted(kinds, (f) => s.pantry[f]);
       const emptyAfter = pantryTotal(s) === 1;
       return {
@@ -209,7 +209,7 @@ export const ACTIONS: ActionDef[] = [
   {
     id: 'rain',
     place: 'burrow',
-    label: 'curl up by the door and listen to the rain',
+    label: 'tuck in by the door and listen to the rain',
     doing: 'listening to the rain',
     gist: 'listening to the rain',
     topic: 'rest',
@@ -217,7 +217,7 @@ export const ACTIONS: ActionDef[] = [
     minutes: [20, 40],
     effects: { calm: 16, rest: 6 },
     blocked: ({ s }) => (isWet(s.world.weather) ? null : 'it had stopped raining'),
-    outcome: () => ({ text: 'curled up by the door of the burrow and listened to the rain on the oak roots' }),
+    outcome: () => ({ text: 'sat tucked into a loaf by the door of the burrow, ears down, and listened to the rain on the oak roots' }),
   },
   {
     id: 'letterbox',
@@ -286,7 +286,7 @@ export const ACTIONS: ActionDef[] = [
     minutes: [30, 55],
     effects: { making: 24, calm: 4 },
     detailAsk: 'what to draw',
-    details: ['the old oak', 'Bramwell asleep behind the counter', 'the train', 'a very large beetle', 'rain on the stream'],
+    details: ['the old oak', 'Bramwell asleep behind the counter', 'the train', 'a very tall dandelion', 'rain on the stream'],
     work: 'piece',
     outcome: ({ rng }, act) => {
       const r = act.result;
@@ -482,7 +482,7 @@ export const ACTIONS: ActionDef[] = [
       const name = VILLAGERS[who].name;
       if (s.needs.calm < 30 && rng.chance(0.4)) {
         return {
-          text: `tried to talk with ${name} about ${act.detail} but felt prickly and cut it short`,
+          text: `tried to talk with ${name} about ${act.detail} but felt twitchy and cut it short`,
           extra: { company: -12, calm: -4 },
           thought: { key: 'awkward', text: `Cut a chat with ${name} short`, value: -3, hours: 4 },
         };
@@ -563,7 +563,7 @@ export const ACTIONS: ActionDef[] = [
       text: rng.pick([
         'paddled in the shallows; the water was cold',
         'paddled in the shallows and chased a water boatman',
-        'paddled until the paws went numb',
+        'dabbed a paw in the shallows until it went numb',
       ]),
     }),
   },
@@ -581,7 +581,7 @@ export const ACTIONS: ActionDef[] = [
     outcome: ({ s, rng }) =>
       s.world.heron
         ? {
-            text: 'was watching the fish when a heron landed close by; Khina curled up tight until it left',
+            text: 'was watching the fish when a heron landed close by; Khina thumped a back foot once, then froze flat in the grass until it left',
             extra: { calm: -18 },
             thought: { key: 'heron', text: 'A heron landed right next to me', value: -5, hours: 6 },
           }
@@ -621,7 +621,7 @@ export const ACTIONS: ActionDef[] = [
   {
     id: 'forage',
     place: 'woods',
-    label: 'forage for beetles and berries',
+    label: 'forage for clover and berries',
     doing: 'foraging in the woods',
     gist: 'foraging',
     topic: 'food',
@@ -630,7 +630,7 @@ export const ACTIONS: ActionDef[] = [
     effects: { fullness: 10, novelty: 4, rest: -7 },
     outcome: ({ s, rng }) => {
       const owls = isDark(s.t);
-      const owlText = owls ? '; every owl hoot made Khina jump' : '';
+      const owlText = owls ? '; every owl hoot made Khina freeze, ears flat' : '';
       const owlCalm = owls ? -6 : 0;
       if (rng.chance(0.15)) {
         return {
@@ -640,14 +640,14 @@ export const ACTIONS: ActionDef[] = [
         };
       }
       const berries = rng.int(0, 3);
-      const beetles = rng.int(1, 2);
+      const clover = rng.int(1, 2);
       const brought = [
         ...(berries ? [pluralFood('berries', berries)] : []),
-        pluralFood('beetles', beetles),
+        pluralFood('clover', clover),
       ].join(' and ');
       return {
-        text: `foraged in the woods, ate some on the spot and brought home ${brought}${owlText}`,
-        pantry: { berries, beetles },
+        text: `foraged in the woods, nibbled some on the spot and brought home ${brought}${owlText}`,
+        pantry: { berries, clover },
         extra: { calm: owlCalm },
       };
     },
@@ -741,7 +741,9 @@ export const ACTIONS: ActionDef[] = [
           };
         }
       }
-      if (r < 0.75) return { text: 'poked about in the moss and found a fat beetle, and took it home for the pantry', pantry: { beetles: 1 } };
+      if (r < 0.6) return { text: 'poked about in the moss and found a patch of clover, and took a bunch home for the pantry', pantry: { clover: 1 } };
+      if (r < 0.68) return { text: 'poked about in the moss and found some dandelion leaves, and took them home to dry with the clover', pantry: { clover: 1 } };
+      if (r < 0.75) return { text: 'poked about in the moss and found a wild strawberry, and took it home to dry with the blackberries', pantry: { berries: 1 } };
       return { text: 'poked about in the moss and found nothing but more moss' };
     },
   },
@@ -869,7 +871,7 @@ export const ACTIONS: ActionDef[] = [
     minutes: [25, 50],
     effects: { novelty: 32, calm: 2, rest: -3 },
     detailAsk: 'what to look up: a question Khina wonders about',
-    details: ['how far can a hedgehog walk in a night', 'why do herons stand so still'],
+    details: ['why do rabbits thump their back feet', 'why do herons stand so still'],
     blocked: ({ s }) => (s.world.can?.net ? null : 'the old computer would not switch on'),
     work: 'web',
     outcome: (_c, act) => {

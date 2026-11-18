@@ -1,24 +1,24 @@
-# Khina the hedgehog: build plan
+# Khina the bunny: build plan
 
-Status on 2026-11-15: phases 1 and 2 are done; 30 seeds × 7 days pass 209 of 210 day checks (one day with 2 meals). Phase 2 cut the top-3 category share from 63.7% to 52.7% over 40 days (paper baseline 57.1%) with every day still plausible. A day with Claude on, including the Opus night, costs about $0.023. Phase 3 is done (39 tests pass). On code alone, identical copies become distinguishable individuals (77% of 3-day blocks matched to the right copy, chance 20%). With Claude choosing, copies stayed alike in what they do over 12 days, and two fixes (habit words, code's favourite) did not measurably change that; their learned sheet lines do differ. Phase 4 is under way: Khina and the village are built in Blender and shown live in the browser, driven by the sim (`npm run live`). How to run: see README.md.
+Status on 2026-11-15: phases 1 and 2 are done; 30 seeds × 7 days pass 209 of 210 day checks (one day with 2 meals). Phase 2 cut the top-3 category share from 63.7% to 52.7% over 40 days (paper baseline 57.1%) with every day still plausible. A day with Claude on, including the Opus night, costs about $0.023. Phase 3 is done (39 tests pass). On code alone, identical copies become distinguishable individuals (77% of 3-day blocks matched to the right copy, chance 20%). With Claude choosing, copies stayed alike in what they do over 12 days, and two fixes (habit words, code's favourite) did not measurably change that; their learned sheet lines do differ. Phase 4 is under way: Khina and the village are built in Blender and shown live in the browser, driven by the sim (`npm run live`). On 2026-11-18 the user made Khina a bunny (she/her); see phase 4. How to run: see README.md.
 
 This file is the handoff. Anyone picking the project up (a person or a different model) should be able to start from here without the earlier conversation.
 
 ## What we are building
 
-A cute hedgehog that lives on his own in a small 3D world in the browser. Nobody prompts him. He gets hungry, tired, lonely and bored, and does things to feel better. Over time he should develop his own tastes, make things, and eventually earn enough real money to cover his own running costs.
+A cute bunny that lives on her own in a small 3D world in the browser. Nobody prompts her. She gets hungry, tired, lonely and bored, and does things to feel better. Over time she should develop her own tastes, make things, and eventually earn enough real money to cover her own running costs.
 
 The inspiration is Pino, the kiwi bird at pinos.world. This is not a copy: different creature, different world, different look, and several mechanisms Pino does not have.
 
 ## Decided by the user
 
-- The creature is a cute hedgehog named Khina (the user's own choice of name).
+- The creature is Khina (the user's own choice of name): a cute hedgehog at first, and since 2026-11-18 a really cute bunny ("she rly likes bunnies let her be a really cute bunny"). Khina is she/her.
 - 3D models and the character are made in Blender.
 - The brain runs on the user's Claude API credits.
-- The hedgehog should try to pay for himself.
+- Khina should try to pay for herself.
 - No code until the user says go.
-- World: a village in a forest, plus a city he can reach by taking a train.
-- The coding agent builds the hedgehog model in Blender, working from reference pictures of cute hedgehogs.
+- World: a village in a forest, plus a city she can reach by taking a train.
+- The coding agent builds Khina's model in Blender, working from reference pictures (cute hedgehogs at first; a needle-felted bunny since 2026-11-18).
 - Models are mixed by job: Haiku for everyday decisions, Sonnet for medium work, Opus for the complicated work. The user said to do whatever is best within that.
 
 ## Proposed, not yet confirmed
@@ -30,7 +30,7 @@ The inspiration is Pino, the kiwi bird at pinos.world. This is not a copy: diffe
 ## Open decisions (the user's call)
 
 1. Where the always-on brain runs once it leaves the laptop.
-2. Whether Khina is a he, a she or neither. This plan says "he" only as a placeholder.
+2. Settled on 2026-11-18: Khina is a she (she/her).
 
 ## The one rule everything follows
 
@@ -38,46 +38,46 @@ Code owns the body. The model is a voice actor and idea generator.
 
 | Code owns | The model owns |
 |---|---|
-| The clock and how needs drop | Proposing 3 to 5 things he could do, with a reason for each |
-| Mood and energy | What he says, draws, writes or codes |
-| What each action does to each need | The wording of his diary and beliefs |
-| The menu of what is possible right now | Suggested edits to his character sheet |
+| The clock and how needs drop | Proposing 3 to 5 things she could do, with a reason for each |
+| Mood and energy | What she says, draws, writes or codes |
+| What each action does to each need | The wording of her diary and beliefs |
+| The menu of what is possible right now | Suggested edits to her character sheet |
 | The final random pick | Judging whether a new piece differs from old ones |
 | What actually happened | |
 | The log, memory and all counters | |
 
-Test for which side something goes on: if getting it wrong would make him lie about his own life or get stuck, code owns it.
+Test for which side something goes on: if getting it wrong would make her lie about her own life or get stuck, code owns it.
 
 ## How one decision works
 
 1. The body ticks every 1 to 3 seconds with no model call: needs drop, mood drifts, the current activity continues.
 2. A decision is requested only when something happened, an activity ended, or a few minutes passed. Routine low-stakes moves are picked by code alone.
 3. Code scores every possible action by how much it would help. Low needs count far more than high ones (for example score = 10 / need level). Recently used actions score zero.
-4. Code builds a fresh, short prompt: his character sheet, how he feels in words (never numbers), what he is in the middle of, a one or two sentence summary of recent activity (never the raw log), a few memories, and the shortlist.
+4. Code builds a fresh, short prompt: her character sheet, how she feels in words (never numbers), what she is in the middle of, a one or two sentence summary of recent activity (never the raw log), a few memories, and the shortlist.
 5. The model returns 3 to 5 candidates with reasons.
 6. Code picks one at random, weighted by its own scores. The world runs it or refuses it.
 7. Only then is the model asked for a diary line about what actually happened.
 
-## Keeping him from repeating himself
+## Keeping her from repeating herself
 
 - Hard block: the last few actions are removed from the menu.
 - Going stale: each use of an action or topic makes it give less, and it recovers after about a day of rest. This replaces Pino's fixed 7x penalty, which has no evidence behind it.
-- Theme ruts: rotate which memories and likes he is shown, sometimes surface an old random memory, and track time since the last new place, topic or kind of creation.
+- Theme ruts: rotate which memories and likes she is shown, sometimes surface an old random memory, and track time since the last new place, topic or kind of creation.
 - Drama manager: if nothing new has happened for a while, the world makes something happen.
 - Outside events: visitor notes, weather, things found.
-- Do not rely on temperature or on telling him not to repeat. Both were measured and do nothing.
+- Do not rely on temperature or on telling her not to repeat. Both were measured and do nothing.
 
 ## Memory and sleep
 
 - Code writes an append-only log of what really happened. The model cannot edit it.
 - Above that sits a small memory with a few dozen slots. A new memory gets in only by beating the weakest one.
-- Once per hedgehog day he sleeps. A stronger model reads the day and writes the diary page, picks memories to keep or drop, and proposes at most one edit to his character sheet.
+- Once per Khina day she sleeps. A stronger model reads the day and writes the diary page, picks memories to keep or drop, and proposes at most one edit to her character sheet.
 - Code decides whether the edit is allowed. A belief needs support on several different days.
-- His character sheet starts at about 20 lines of temperament and voice, with no hobbies written in. Hobbies must be earned.
+- Her character sheet starts at about 20 lines of temperament and voice, with no hobbies written in. Hobbies must be earned.
 
 ## How tastes form
 
-After every finished action, code records how his mood actually changed and updates a liking score for that action and topic: a fast score that fades in days and a slow one that lasts. The scores feed back into the scoring in step 3 and, in small rotating samples, into the prompt. About 10 to 20 percent of free choices are reserved for things outside his current favourites.
+After every finished action, code records how her mood actually changed and updates a liking score for that action and topic: a fast score that fades in days and a slow one that lasts. The scores feed back into the scoring in step 3 and, in small rotating samples, into the prompt. About 10 to 20 percent of free choices are reserved for things outside her current favourites.
 
 This is the unproven part of the project and its central experiment.
 
@@ -85,16 +85,16 @@ This is the unproven part of the project and its central experiment.
 
 1. Code forces a combination: one current interest, one recent memory, one random constraint.
 2. The model lists several ideas.
-3. Code rejects ideas too similar to his past work.
-4. He makes the piece (a drawing in code, a short text, a tune, a small web toy).
+3. Code rejects ideas too similar to her past work.
+4. She makes the piece (a drawing in code, a short text, a tune, a small web toy).
 5. A checker repairs anything that will not display or play.
-6. The piece is stored and tagged so later sessions lean toward things he has not tried.
+6. The piece is stored and tagged so later sessions lean toward things she has not tried.
 
 ## Money
 
 - Money becomes a need: the shed has rent, tied to a real ledger of income minus API spend.
-- Ways to earn, best first: paid interactions (feed him, gift him something, commission a drawing), selling what he makes, a monthly "adopt him" membership, and the user's own videos about him.
-- The money sits in the user's Stripe account. The hedgehog gets a ledger and a budget.
+- Ways to earn, best first: paid interactions (feed her, gift her something, commission a drawing), selling what she makes, a monthly "adopt her" membership, and the user's own videos about her.
+- The money sits in the user's Stripe account. Khina gets a ledger and a budget.
 - Anything that reaches real people or spends money (emails, posts, purchases) goes through an approval queue with daily caps.
 - The rent numbers shown to visitors are the real ones.
 - No crypto tokens and no autonomous trading.
@@ -105,15 +105,15 @@ Needs: hunger, rest, calm, company, something new, the urge to make. Rent is add
 
 The user chose a village in a forest, with a city reachable by train. The place list below is a proposal.
 
-Forest village, about ten places, each tied to needs: his home (rest), a workbench (making), a bakery or small shop (hunger, company), a village square with a bench (company), a vegetable patch (hunger, calm), a stream (calm), the deep woods (calm, foraging), a clearing where odd things turn up (something new), a letterbox for visitor notes, and the train halt.
+Forest village, about ten places, each tied to needs: her home (rest), a workbench (making), a bakery or small shop (hunger, company), a village square with a bench (company), a vegetable patch (hunger, calm), a stream (calm), the deep woods (calm, foraging), a clearing where odd things turn up (something new), a letterbox for visitor notes, and the train halt.
 
-The city, added later: a market where he can sell what he makes, a junk shop, a museum or gallery, an arcade, a busy station.
+The city, added later: a market where she can sell what she makes, a junk shop, a museum or gallery, an arcade, a busy station.
 
 Why the train is useful to the design:
 - A trip is a big dose of "something new", which is the hardest need to keep fed.
-- A ticket costs money, so trips connect to his budget.
+- A ticket costs money, so trips connect to her budget.
 - The city is where selling happens, which gives the money idea a place in the world.
-- The timetable is an outside event he cannot control.
+- The timetable is an outside event she cannot control.
 
 Aim for about 25 actions in the village at first. The research is clear that a small set of actions is the real limit on variety.
 
@@ -122,9 +122,9 @@ Aim for about 25 actions in the village at first. The research is clear that a s
 - Blender 5.3 is installed at `/Applications/Blender.app`.
 - Models can be built by script: `/Applications/Blender.app/Contents/MacOS/Blender --background --python <script>`, then a preview image is rendered and checked, then the model is exported as `.glb` for the browser.
 - Keep the editable `.blend` files in an `art/` folder so the user can open and refine them by hand.
-- Hedgehog shape: round body, big head, tiny legs, soft spines. Animations needed: waddle, sniff, curl into a ball, sleep.
-- Before modelling, collect reference pictures of cute hedgehogs (real ones and stylised ones) and work from them. Do not copy any existing character's design.
-- Scripted models come out simple. The user can still refine him by hand in Blender afterwards.
+- Khina's shape since 2026-11-18: a small needle-felted bunny (long ears, twitchy nose, soft fur, cotton-ball tail) in `art/khina.py`. Pose ids stay the same for the sim and the page (walk, sniff, work, eat, curl, sit, paddle, stand). Until then she was a hedgehog (round body, soft spines).
+- Before modelling, collect reference pictures (real and stylised) and work from them. Do not copy any existing character's design.
+- Scripted models come out simple. The user can still refine her by hand in Blender afterwards.
 
 ## Models and billing
 
@@ -154,10 +154,10 @@ Falling back to the Claude subscription when credits run out: see the note at th
 
 ## Build phases
 
-1. Text-only brain: needs, mood, about ten places, about 25 actions, the decision loop, a diary. Done when he lives a plausible day with the model switched off, and a readable day with it on.
+1. Text-only brain: needs, mood, about ten places, about 25 actions, the decision loop, a diary. Done when she lives a plausible day with the model switched off, and a readable day with it on.
    - Built: 9 places, 27 actions, 6 needs, mood from labelled thoughts, the full decision loop with code doing the final pick, template diary offline, Claude diary and candidates online, spend caps. Code map: `src/world/` (village, places, actions), `src/body.ts` (needs, mood), `src/mind/` (scoring, decision, prompts, Claude), `src/sim.ts` (clock), `src/report.ts` (day.md and checks).
    - Tuning finding: when costs (tiredness, hunger) counted fully in scoring, effortless options crowded out everything (sitting on the bench 572 times in 210 days, exploring twice). Counting costs at half weight fixed it (`mind.costWeight` in `src/config.ts`).
-   - Model-on findings (3 days read): the diary reads like a character and picks up threads by itself (found a thimble, argued with the squirrel kids over it, whittled a peg for it). Fixed along the way: a smell in every line (code now rotates which sense a line may use), copying the energy line, "meant to X but" filler, every line opening with day and weather, details cut mid-word. Villagers now have fixed pronouns in the prompt (Bramwell he, Old Wren she, Tansy she) so lines agree with each other. Khina's own pronoun is still open; prompts use the name and first person.
+   - Model-on findings (3 days read): the diary reads like a character and picks up threads by itself (found a thimble, argued with the squirrel kids over it, whittled a peg for it). Fixed along the way: a smell in every line (code now rotates which sense a line may use), copying the energy line, "meant to X but" filler, every line opening with day and weather, details cut mid-word. Villagers now have fixed pronouns in the prompt (Bramwell he, Old Wren she, Tansy she) so lines agree with each other. Khina's own pronoun was open until 2026-11-18 (now she); prompts use the name and first person.
    - Evidence for phase 2: even with the model on, Khina returns to the same few things all day (bakery 6 times, the lantern 4 to 5 times). The 3-action mask stops back-to-back repeats only; once Claude tried to repeat the lantern and the mask blocked it. Going stale (habituation) is the next fix.
 2. Anti-repetition, memory, sleep and tastes. Done when a 40-day fast-forward run scores far below the known baseline of 95 to 98 percent repeated actions.
    - Done criterion changed: the paper's measure (an action category seen in the 5 days before) is about 100% for Khina by construction, because 27 fixed actions all recur within 5 days. It is still reported, for honesty. Phase 2 is judged instead on measures that can move: top-3 and top-5 category share (paper baselines 57.1% and 75.4%), same routine as yesterday, and variety, with phase 2 switched off versus on, same seeds.
@@ -183,8 +183,8 @@ Falling back to the Claude subscription when credits run out: see the note at th
    - Result with real Claude (3 copies × 12 days, off vs on the same day, $0.56): no help. Ratio 1.10 off vs 0.74 on; same routine as yesterday 7.7% → 10.8%; one day with 2 meals. Left off by default (`codeFavourite: false`). The stand-in only proposes 3 fixed options, while Claude proposes about 4 to 5 varied ones, so the stand-in overstated how much code's favourite was being left out.
    - Phase 3 conclusion. Across five Claude runs of the same 3-copy, 12-day setup, the ratio ranged 0.74 to 1.27 and day-matching 27% to 87%, with no pattern by fix; code alone scores a ratio of about 3 on the same test. So: (1) on code alone, practice turns identical copies into distinguishable individuals; (2) with Claude choosing, copies do not diverge in what they do over 12 days, and neither habit words nor code's favourite changed that by an amount this test size can detect; (3) individuality with Claude shows elsewhere: each copy's learned sheet lines differ (one came to like drawing with charcoal, one chatting in the square, one went off watching the fish). Open: whether Claude copies diverge over longer runs (about $2.40 for 5 copies × 30 days × 2 personalities), and a blind test of whether a judge can tell copies apart from their diaries (cheap, untested).
    - Spent on phase 3 experiments on 2026-11-15: $1.77, with the daily cap raised per command at the user's request.
-4. The hedgehog and world in Blender, shown in the browser, driven by the brain.
-   - Started 2026-11-15. Built: Khina in Blender (`art/khina.py`), from 7 freely licensed reference photos (`art/refs/`, credits and notes there): round body, big head, banded spines (dark with cream tips), big eyes, blush, ears, four feet. Rigid parts on pivots (body, head at the neck, each foot), so the browser animates without a skeleton. The village (`art/village.py`): Khina's burrow in the roots of an oak (round door, round window, stove pipe, letterbox with a flag), the shed and a hedgehog-height workbench, the bakery, the square with a well, bench and lamp, the vegetable patch, the stream with pebbles and a half-built dam, the woods with a stump, the clearing with a fallen log and a fairy ring, the halt with platform and rails, and 560 trees. About 110,000 triangles, flat-shaded, one vertex-coloured material.
+4. Khina and the world in Blender, shown in the browser, driven by the brain.
+   - Started 2026-11-15, when Khina was a hedgehog. Built: Khina in Blender (`art/khina.py`), from 7 freely licensed reference photos (`art/refs/`, credits and notes there): round body, big head, banded spines (dark with cream tips), big eyes, blush, ears, four feet. Rigid parts on pivots (body, head at the neck, each foot), so the browser animates without a skeleton. The village (`art/village.py`): Khina's burrow in the roots of an oak (round door, round window, stove pipe, letterbox with a flag), the shed and a hedgehog-height workbench, the bakery, the square with a well, bench and lamp, the vegetable patch, the stream with pebbles and a half-built dam, the woods with a stump, the clearing with a fallen log and a fairy ring, the halt with platform and rails, and 560 trees. About 110,000 triangles, flat-shaded, one vertex-coloured material.
    - Shown in the browser: `npm run live` runs the sim as it happens (code-only brain by default, no spend) and streams snapshots to a three.js page (`web/main.ts`). Khina walks the paths (`src/world/layout.ts`: place positions are the sim's coordinates × 3 m, so walking times match) to the spot for each action, goes out of sight indoors, and holds a pose per action: waddle, sniff, work, eat, sit, curl, paddle. Day and night follow the game clock; rain, drizzle and fog show; windows light when someone is in; chimneys smoke; the letterbox flag rises when there is post. A small panel shows the time, what Khina is doing and why, mood and needs, and the last diary lines.
    - Checked by headless Chrome screenshots: day, rain, dusk and night, inside and outside, curled and walking. Not yet: other villagers, the train, the inside of the burrow (Khina is out of sight while home), sound, and keeping Khina's life between server restarts.
    - 2026-11-16, the look upgrade (the user: "the graphics need to be much much better", Khina "cute like this", a needle-felted hedgehog photo; and "moving around like my own player, WASD"):
@@ -192,12 +192,19 @@ Falling back to the Claude subscription when credits run out: see the note at th
      - Felt fuzz in the browser (`web/fuzz.ts`): every material named `Fur*` gets 20 shell layers drawing fibres; the fuzz length per vertex rides in UV channel U (glTF drops colour alpha), 0 next to the eyes and mouth.
      - Renderer (`web/look.ts`): ACES tone mapping, a painted sky with sun, drifting clouds and stars, image-based light from that sky (so the eyes reflect it), soft sun shadows, exponential fog, ambient occlusion (GTAO), bloom for lit windows, a soft vignette. Time of day and weather drive all of it.
      - Grass and wild flowers (`web/grass.ts`): instanced blades in 8 m tiles around the camera, swaying in the wind, grown where `art/export/terrain.json` says grass grows; tree foliage and water move too; fireflies on dry nights; warm light spills from lit windows.
-     - You can walk around (`web/player.ts`, `art/visitor.py`): a felt bunny, WASD or arrows relative to the camera, Shift runs, Space hops, collisions from `terrain.json`. The first key press hands you the camera; "Follow Khina" gives it back. Khina looks up at you when you come close.
+     - You can walk around (`web/player.ts`, `art/visitor.py`): a little felt hedgehog (a felt bunny until 2026-11-18, when Khina became the bunny), WASD or arrows relative to the camera, Shift runs, Space hops, collisions from `terrain.json`. The first key press hands you the camera; "Follow Khina" gives it back. Khina looks up at you when you come close.
      - Runs at 60 fps on this Mac. `?lite` drops ambient occlusion and thins the grass for slower machines.
+   - 2026-11-18, Khina is a bunny (the user: "khina is going to be a bunny actually she rly likes bunnies let her be a really cute bunny please"):
+     - Khina is now a really cute needle-felted bunny, she/her. The visitor you walk around as is now the old felt hedgehog. The model and animation were rebuilt alongside; action, place and pose ids did not change, so saves and the page still fit.
+     - Words: the character sheet gives concrete bunny details (long ears that turn toward sounds, a twitchy nose, soft fur, a cotton-ball tail, hops, nibbles greens, washes her face with her paws, thumps a back foot when startled, flops over when content), and the diary, night, making and post prompts say never spines or prickles. Need voices, reasons and outcomes are bunny ones: a heron makes her thump and freeze flat, the rain action is tucking into a loaf by the door.
+     - Food: dried beetles became dried clover (`FoodId` `clover`). Foraging brings home clover and berries; the moss in the clearing gives clover, dandelion leaves or a wild strawberry. Finds and sights lost their snail shells and beetle wings (hazelnut shells, eggshells; a gap in a fence just bunny-sized).
+     - The live save is brought over once on load (`migrateSave` in `src/migrate.ts`, marked by `species: 'bunny'`), the state and the saved diary log together: pantry beetles become clover (the `beetles` key stays at 0, so the hedgehog build could still read the save after a rollback); finds on her shelf get their bunny names (an empty snail shell is now a hazelnut shell); thoughts, memories, recent history, night pages and diary-log records that only make sense for a hedgehog (spines, quills, curled into a ball, beetles, snails, grubs) are dropped; beliefs and sheet lines keep their evidence and are reworded from today's labels; tastes, pieces, readings, posts and letters are kept, and the game minute it happened is kept as `bunnySince`: pieces, readings and posts from before then that only a hedgehog could have made are not shown on the page nor read back into prompts (`fromHedgehogDays`). The file as it was is kept once as `<save>.hedgehog.json`. Anything the model writes that gives her a hedgehog's body or ways again (being a hedgehog, her own spines, curling into a ball, eating beetles or worms; a diary line, a sheet line, a night page, a post) is turned away by a narrower live guard (`HEDGEHOG_SELF` in `src/mind/prompts.ts`), so a snail on the path or prickly brambles are fine; a page turned away leaves no blank night on the site.
+     - The model, after review: big flat glossy eyes that sit in the felt (no goggle in profile); short forelegs that the page stretches every frame from each front paw into her chest, so her paws never float; in a loaf her ears tip back and curl along the round of her head (a "Lie" shape key on each ear, blended in with the loaf; the fuzz shells share its weight); head-down poses dip her body rather than her head, so her face shows from above; she washes her face with both paws at her muzzle; catch-lights dim at night. Until the viewer moves the camera, it drifts round to the side she faces when she settles, if the view is clear.
+     - After a second review: brown eyes that read in the game (a wide warm iris ring, less mirror-like gloss, catch-lights under the bloom threshold so they don't halo); snow-white fur with caramel only at the ear tips, rosier ear linings and a round rosy cheek patch; in a loaf each ear turns half round as it lies back, so it wraps her head cream side up with the pink against her; hopping, her front paws stay tucked up until just before landing and a paw never reaches further than its foreleg; poses tell apart: eating sits up with a bite in both paws (a crust, a pea pod or a clover sprig), digging scoops out in front with earth flying, paddling stops to shake a wet paw, the dam turns a pebble over and sets it down; at the shed's workbench the camera comes in closer for her profile when the shed and the oak are in the way. The visitor hedgehog went from 4.9 MB to 1.3 MB (fewer, thicker three-sided spines).
 5. Visitors: notes and gifts.
 6. Making things, the shop, rent and the approval queue.
    - 2026-11-16, built ahead of phase 5 at the user's request ("it can do anything", "an internet building"). Live server only; every experiment runs exactly as before (the new actions are blocked unless the sim is given a piece store, and the stand-in model's favourites skip them).
-     - Khina's own ideas (`own` in `src/world/actions.ts`): the model may propose anything a hedgehog could do in the village, with a place and a kind (making, social, nature, exploring, rest, home). The kind sets the effects, so the body still weighs it, and each kind goes stale and becomes a taste on its own (`own.nature`, `own.making`).
+     - Khina's own ideas (`own` in `src/world/actions.ts`): the model may propose anything a bunny could do in the village, with a place and a kind (making, social, nature, exploring, rest, home). The kind sets the effects, so the body still weighs it, and each kind goes stale and becomes a taste on its own (`own.nature`, `own.making`).
      - Real pieces (`src/mind/making.ts`, `src/pieces.ts`): `make` (picture, poem, short story, song, little game) and the shed's `draw` (charcoal on bark) produce the real thing on Sonnet 5.5. Code picks the form from Khina's words, adds one random constraint and the titles to avoid, and checks every piece before it is stored (SVG stripped of scripts, links and foreign content; tunes limited to real pitches; games get a no-network sandbox). Trial: 5 of 5 pieces usable, $0.004 (poem) to $0.022 (game), 4 to 14 s.
      - The internet hut (`nethut`, `browse`): Sonnet 5.5 with web search (at most 2 searches), read-only, gentle-topics rule, page text treated as information. What Khina found becomes a thought, a memory and a line in later prompts. Trial: $0.035 and 12 s per lookup.
      - Budget: pieces and the internet share `KHINA_EXTRAS_CAP_USD` (default $0.30 a day) inside the daily cap; when it runs out, making is words only and the hut's computer stays off.
@@ -220,10 +227,10 @@ Falling back to the Claude subscription when credits run out: see the note at th
 
 The user asked for "use my API credits, and if they run out, use my Claude subscription". Checked against the official documentation on 2026-11-15:
 
-For the hedgehog's brain (the always-on app):
+For Khina's brain (the always-on app):
 - There is no automatic fallback from API credits to a subscription, in either direction.
 - The documentation says apps and services built on Claude "should use API key authentication", and that subscription limits "assume ordinary, individual usage". It does not clearly cover a personal app running all day on a subscription, so the plan does not rely on it.
-- Decision for the build: the brain uses the API key only. When credits or the daily cap run out, the code-only autopilot keeps him alive (eating, resting, wandering, napping) with no model calls, and he "wakes up" when credits return.
+- Decision for the build: the brain uses the API key only. When credits or the daily cap run out, the code-only autopilot keeps her alive (eating, resting, wandering, napping) with no model calls, and she "wakes up" when credits return.
 - In the Claude Console, set a spend limit, and optionally auto-reload, which buys more credits when the balance drops below a threshold.
 - The code must handle the out-of-money responses without crashing: 400 (own spend limit reached), 429 (tier cap) and 402 (billing problem).
 

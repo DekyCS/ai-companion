@@ -5,7 +5,7 @@
 import type { Rng } from '../rng.ts';
 import type { PieceForm, PieceRef, Reading, State } from '../state.ts';
 import { moodWord } from '../body.ts';
-import { characterSheet } from './prompts.ts';
+import { BUNNY_RULE, characterSheet, fromHedgehogDays, HEDGEHOG_SELF } from './prompts.ts';
 
 /** What the model hands back for a piece, before it is checked and stored. */
 export interface PieceDraft {
@@ -59,7 +59,7 @@ export function formFor(about: string, rng: Rng): PieceForm {
 
 const CONSTRAINTS: Record<PieceForm, string[]> = {
   picture: [
-    'use only three colours', 'seen from very low down, at hedgehog height', 'mostly empty space', 'at night',
+    'use only three colours', 'seen from very low down, at bunny height', 'mostly empty space', 'at night',
     'everything leaning a little to one side', 'from far away, very small', 'very close up', 'in the rain',
     'only round shapes', 'with one thing in it that does not belong', 'as a map', 'from above, like a bird would see it',
   ],
@@ -71,7 +71,7 @@ const CONSTRAINTS: Record<PieceForm, string[]> = {
   song: ['very slow', 'only five different notes', 'in a minor key', 'a marching rhythm', 'a line that repeats', 'it starts high and comes down'],
   toy: ['one button only', 'it follows the pointer', 'no score, just something to watch', 'catch falling things', 'something grows', 'a tiny maze'],
 };
-const CHARCOAL_OK = new Set(['seen from very low down, at hedgehog height', 'mostly empty space', 'at night', 'from far away, very small', 'very close up', 'only round shapes', 'with one thing in it that does not belong', 'from above, like a bird would see it']);
+const CHARCOAL_OK = new Set(['seen from very low down, at bunny height', 'mostly empty space', 'at night', 'from far away, very small', 'very close up', 'only round shapes', 'with one thing in it that does not belong', 'from above, like a bird would see it']);
 
 export function pieceRequest(s: State, form: PieceForm, about: string, medium: string, rng: Rng, onMind: string): PieceRequest {
   const pool = medium ? CONSTRAINTS.picture.filter((c) => CHARCOAL_OK.has(c)) : CONSTRAINTS[form];
@@ -82,7 +82,7 @@ export function pieceRequest(s: State, form: PieceForm, about: string, medium: s
     constraint: rng.pick(pool),
     onMind,
     mood: moodWord(s.mood),
-    avoid: (s.pieces ?? []).slice(-8).map((p) => p.title),
+    avoid: (s.pieces ?? []).filter((p) => !fromHedgehogDays(s, p.t, p.title)).map((p) => p.title).slice(-8),
   };
 }
 
@@ -90,13 +90,15 @@ const FORM_ASK: Record<PieceForm, string> = {
   picture: `A picture as one standalone SVG: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">...</svg>. Drawn by paw: slightly wobbly paths, uneven fills, a small palette, a background that fills the frame. No <text>, no scripts, no links, no external images or fonts, no filters that reference other files. Under 20000 characters. Put it in "svg".`,
   poem: 'A poem of 4 to 12 short lines, in Khina\'s voice: plain, dry, small words. Lines separated by \\n. Put it in "text".',
   story: 'A very short story of 60 to 160 words, in Khina\'s voice or about the village. Put it in "text".',
-  song: 'A song: the words (4 to 10 short lines, \\n between lines) in "text", and the tune in "notes": 12 to 48 notes, each {"p": pitch like "E4" or "F#4" between C3 and C6, or "rest"; "d": beats, one of 0.5, 1, 1.5, 2, 3, 4}. A simple tune a hedgehog could hum. Tempo in "tempo", 60 to 160.',
+  song: 'A song: the words (4 to 10 short lines, \\n between lines) in "text", and the tune in "notes": 12 to 48 notes, each {"p": pitch like "E4" or "F#4" between C3 and C6, or "rest"; "d": beats, one of 0.5, 1, 1.5, 2, 3, 4}. A simple tune a bunny could hum. Tempo in "tempo", 60 to 160.',
   toy: `A little game or toy as one self-contained HTML page in "html": inline <style> and <script> only, no external files, no network requests, no storage, no alerts or popups. It fills a 400 by 300 box, works with a mouse or a finger, and is about something from Khina's village. Simple and charming, not polished. Under 15000 characters.`,
 };
 
-export const makeSystem = (s?: State) => `You make things for Khina, a small hedgehog who lives in a forest village. Khina has decided to make something, and you make the real thing, the way Khina would: small, a bit odd, honest, by paw. Never slick, never corporate, never cute-for-its-own-sake. It should feel like it came from this particular hedgehog on this particular day.
+export const makeSystem = (s?: State) => `You make things for Khina, a small bunny who lives in a forest village. Khina has decided to make something, and you make the real thing, the way Khina would: small, a bit odd, honest, by paw. Never slick, never corporate, never cute-for-its-own-sake. It should feel like it came from this particular bunny on this particular day.
 
 Return JSON with: form (as asked), title (2 to 6 words, as Khina would name it), and the piece in its field. Leave the other fields empty ("" or [] or 0).
+
+If Khina herself is in the piece, she is a small bunny with long ears, soft round fur and a cotton-ball tail.
 
 ${characterSheet(s)}`;
 
@@ -104,7 +106,7 @@ export function makePrompt(r: PieceRequest): string {
   const lines = [
     `Khina wants to make: ${r.about}.`,
     `Form: ${r.form}.${r.medium ? ` Medium: ${r.medium} (so: dark charcoal strokes and smudges on a bark-brown background, no other colours).` : ''}`,
-    `A constraint Khina set itself: ${r.constraint}.`,
+    `A constraint Khina set herself: ${r.constraint}.`,
     `Khina's mood: ${r.mood}.`,
   ];
   if (r.onMind) lines.push(`On Khina's mind lately: ${r.onMind}`);
@@ -227,11 +229,11 @@ export function checkPiece(json: unknown, req: PieceRequest): PieceDraft | strin
 
 // ---------- The internet hut ----------
 
-export const webSystem = (s?: State) => `You run the old computer in the internet hut for Khina, a small hedgehog who lives in a forest village. Khina has come to look something up. Search the web once and tell Khina what you found.
+export const webSystem = (s?: State) => `You run the old computer in the internet hut for Khina, a small bunny who lives in a forest village. Khina has come to look something up. Search the web once and tell Khina what you found.
 
 Reply with JSON:
 - question: what Khina looked up, as Khina would put it, under 12 words.
-- learned: what Khina found out, 1 or 2 short sentences, under 40 words, plain words a hedgehog would understand. True to the pages you read; do not make anything up.
+- learned: what Khina found out, 1 or 2 short sentences, under 40 words, plain words a bunny would understand. True to the pages you read; do not make anything up.
 - sources: 1 or 2 pages you used, each with its title and url.
 
 Rules:
@@ -277,7 +279,7 @@ export function checkReading(json: unknown, asked: string, t: number): Reading |
 
 // ---------- posts: a few short public lines a day ----------
 
-export const postSystem = (s?: State) => `You write a short public post for Khina, a small hedgehog who lives in a forest village and has walked to the old computer in the internet hut. Strangers on the internet may read it.
+export const postSystem = (s?: State) => `You write a short public post for Khina, a small bunny who lives in a forest village and has walked to the old computer in the internet hut. Strangers on the internet may read it.
 
 Reply with JSON:
 - text: the post, first person as Khina, 1 to 3 short sentences, under 220 characters. About Khina's own day, a place in the village, or a thing Khina made. Plain short words, a little dry, the way Khina's diary sounds.
@@ -288,6 +290,7 @@ Rules:
 - No links, no @names, no hashtags, no emojis, no exclamation marks.
 - Never ask anyone for anything: no follows, likes, money, crypto, tokens or buying. Never sell or promote.
 - Nothing about real people, news or politics. Gentle and kind. Never use the words cozy, cosy, adventure, journey, magical, delightful or whimsical.
+- ${BUNNY_RULE}
 
 ${characterSheet(s)}`;
 
@@ -309,7 +312,7 @@ export const POST_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-/** Words a gentle hedgehog's post never needs: scams and selling are what bot accounts get pulled into. */
+/** Words a gentle bunny's post never needs: scams and selling are what bot accounts get pulled into. */
 const POST_NEVER = /\b(crypto|token|coin|nft|airdrop|wallet|giveaway|donat\w*|buy|sell|price|follow me|dm me|link in bio|subscribe)\b/i;
 
 /** A post safe to show strangers: no links, mentions or hashtags, short, and nothing that sells. */
@@ -324,6 +327,7 @@ export function cleanPost(raw: unknown): string | null {
     .trim()
     .replace(/^["“]+|["”]+$/g, '');
   if (t.length > 260) t = `${t.slice(0, 257).replace(/\s+\S*$/, '')}...`;
-  if (t.split(' ').length < 4 || POST_NEVER.test(t)) return null;
+  // Posts are public: none that gives Khina spines again.
+  if (t.split(' ').length < 4 || POST_NEVER.test(t) || HEDGEHOG_SELF.test(t)) return null;
   return t;
 }

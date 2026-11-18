@@ -6,8 +6,8 @@ import type { Post } from '../src/state.ts';
 
 test('posts lose links, mentions and hashtags, and selling is turned down', () => {
   assert.equal(
-    cleanPost('Rain on the oak all day! See https://x.test and @someone #hedgehog life'),
-    'Rain on the oak all day. See and hedgehog life',
+    cleanPost('Rain on the oak all day! See https://x.test and @someone #bunny life'),
+    'Rain on the oak all day. See and bunny life',
   );
   assert.equal(cleanPost('Buy my crypto token now, it is a good one'), null);
   assert.equal(cleanPost('too short'), null);

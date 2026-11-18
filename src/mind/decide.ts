@@ -96,7 +96,7 @@ const REASONS: Record<string, string[]> = {
   calm: ['Need somewhere quiet.', 'Want to settle down.', 'Could do with some peace.'],
   company: ['Want to see a face.', 'Too quiet on my own.', 'Might see someone.'],
   novelty: ['Need something new to look at.', 'Same old everything.', 'Want to see what is out there.'],
-  making: ['Paws want to make something.', 'Feel like making something.', 'Hands are itching.'],
+  making: ['Paws want to make something.', 'Feel like making something.', 'Paws are itching.'],
 };
 
 /** What kind of thing it is decides the reason first; the need it helps most is the backup. */
@@ -110,7 +110,7 @@ const TOPIC_NEED: Partial<Record<string, string>> = {
 };
 
 function templateReason(o: Option, s: State, rng: Rng): string {
-  if (o.def.id === 'sleep') return rng.pick(['Bedtime.', 'Cannot keep my eyes open.', 'Time to curl up.']);
+  if (o.def.id === 'sleep') return rng.pick(['Bedtime.', 'Cannot keep my eyes open.', 'Ears are drooping. Bed.']);
   if (o.def.id === 'letterbox') return rng.pick(['Might be post.', 'Better check the letterbox.']);
   const t = tier(s);
   if (t === 'starving') return 'So hungry it hurts.';

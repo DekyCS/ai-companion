@@ -191,13 +191,26 @@ const FORM_NAME: Record<PieceForm, string> = { picture: 'a picture', poem: 'a po
 const FORM_DID: Record<PieceForm, string> = { picture: 'drew a picture', poem: 'wrote a poem', story: 'wrote a story', song: 'made up a song', toy: 'made a little game' };
 const FORM_GO: Record<PieceForm, string> = { picture: 'look', poem: 'read', story: 'read', song: 'listen', toy: 'play' };
 
+/** A menu label read about her rather than by her ("about my day or something I made" becomes
+ * "about her day or something she made"), for the visitor's status line. */
+function aboutHer(label: string): string {
+  return label
+    .replace(/\bKhina has\b/g, 'she has')
+    .replace(/\bI (made|have|had|was|am)\b/g, (_, v: string) => `she ${v === 'have' ? 'has' : v === 'am' ? 'is' : v}`)
+    .replace(/\bmy\b/g, 'her')
+    .replace(/\bmyself\b/g, 'herself');
+}
+
 /** What Khina is up to, in a few forms: the card title, the purpose of a walk, the status line. */
 function describe(a: HudActivity | null): { title: string; status: string; chip: string } {
   if (!a) return { title: 'Deciding what to do', status: 'deciding what to do next', chip: '' };
   const own = a.actionId.startsWith('own.');
-  const detail = a.detail?.trim() ?? '';
+  // Her own words ("the heron song I made") read about her on the page: "the heron song she made"
+  // (a question she looks up is quoted as she asked it).
+  const raw = a.detail?.trim() ?? '';
+  const detail = a.actionId === 'browse' ? raw : aboutHer(raw);
   const doing = own
-    ? capital(detail || 'trying an idea of my own')
+    ? capital(detail || 'trying an idea of her own')
     : a.actionId === 'make'
       ? `Making ${detail || 'something'}`
       : a.actionId === 'browse'
@@ -208,10 +221,18 @@ function describe(a: HudActivity | null): { title: string; status: string; chip:
   const chip = own ? 'own idea' : a.actionId === 'make' ? 'making' : a.actionId === 'browse' || a.actionId === 'post' ? 'online' : '';
   if (a.kind === 'walk') {
     const to = placeShort(a.place);
-    const purpose = own ? lower(detail) : a.actionId === 'make' ? `make ${detail}` : a.actionId === 'browse' ? `look up “${detail}”` : a.label + (detail ? ` (${detail})` : '');
-    return { title: `On the way to ${to}`, status: `walking to ${to}, to ${purpose}`, chip };
+    const purpose = own
+      ? lower(detail) || 'try an idea of her own'
+      : a.actionId === 'make'
+        ? `make ${detail || 'something'}`
+        : a.actionId === 'browse'
+          ? `look up “${detail || 'something'}”`
+          : a.actionId === 'post'
+            ? `write a post about ${detail || 'her day'}`
+            : aboutHer(a.label) + (detail ? ` (${detail})` : '');
+    return { title: `On the way to ${to}`, status: `hopping over to ${to}, to ${purpose}`, chip };
   }
-  return { title: doing, status: own ? `trying an idea of its own: ${lower(detail)}` : lower(doing), chip };
+  return { title: doing, status: own ? `trying an idea of her own${detail ? `: ${lower(detail)}` : ''}` : lower(doing), chip };
 }
 
 function paceText(speed: number): string {
@@ -534,7 +555,8 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     const arc = moodArc(s);
     if (arc) out.push(arc);
     if (tab === 'nights') {
-      const pages = [...(s.pages ?? [])].reverse();
+      // A night she wrote nothing (code alone, or a page turned away) is left out, not shown blank.
+      const pages = (s.pages ?? []).filter((p) => p.text?.trim()).reverse();
       if (!pages.length) out.push(el('div', 'empty', 'No night pages yet. Khina writes one each night while asleep.'));
       for (const p of pages) {
         const e = el('div', 'entry');

@@ -11,7 +11,7 @@ import { moodWord } from '../body.ts';
 import type { Mind } from './decide.ts';
 import { computeBeliefs, keyLabel } from './habit.ts';
 import { forget, promote, promotionCandidates } from './memory.ts';
-import { STALE_NOTE } from './prompts.ts';
+import { HEDGEHOG_SELF, STALE_NOTE } from './prompts.ts';
 
 export interface ReflectInput {
   day: number;
@@ -50,7 +50,8 @@ const BANNED = /\b(cozy|cosy|adventure|journey|magical|delightful|whimsical)\b/i
 
 function cleanLine(text: string, maxWords: number): string {
   const t = text.replace(/\s+/g, ' ').replace(/!/g, '.').trim();
-  if (!t || BANNED.test(t) || t.split(' ').length > maxWords) return '';
+  // A sheet line is kept for good and a page is shown on the site: none that gives Khina spines again.
+  if (!t || BANNED.test(t) || HEDGEHOG_SELF.test(t) || t.split(' ').length > maxWords) return '';
   return /[.]$/.test(t) ? t : `${t}.`;
 }
 
@@ -115,10 +116,13 @@ export async function nightly(s: State, day: number, records: Completed[], m: Mi
   }
 
   s.lastReflectDay = day;
+  // A page that gives her spines again is turned away whole (not trimmed, like a long one): that night
+  // has no page, as on a night code does alone, and the site shows no blank one.
+  const text = out && !HEDGEHOG_SELF.test(out.page) ? cleanLine(out.page, 110) || out.page.trim() : '';
   const page: NightPage = {
     day,
-    text: out ? cleanLine(out.page, 110) || out.page.trim() : '',
-    by: out ? 'model' : 'none',
+    text,
+    by: text ? 'model' : 'none',
     promoted: promoted.map((x) => x.text),
     dropped: dropped.map((x) => x.text),
     sheetLine,

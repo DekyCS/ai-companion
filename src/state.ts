@@ -5,7 +5,8 @@ import { Rng } from './rng.ts';
 import type { PlaceId } from './world/places.ts';
 import { newWorld, type VillagerId, type WorldState } from './world/village.ts';
 
-export type FoodId = 'berries' | 'beetles' | 'crusts' | 'peas';
+export type FoodId = 'berries' | 'clover' | 'crusts' | 'peas';
+export const FOOD_IDS: FoodId[] = ['berries', 'clover', 'crusts', 'peas'];
 export type Origin = 'model' | 'autopilot' | 'fallback';
 
 export interface Thought {
@@ -178,6 +179,11 @@ export interface Personality {
 
 export interface State {
   name: string;
+  /** Khina is a bunny (since 2026-11-18). Saves from before have no species and are migrated once (src/migrate.ts). */
+  species?: 'bunny';
+  /** The game minute this save became a bunny's: 0 for a Khina born a bunny, the minute it was brought
+   * over for one from her hedgehog days (missing on saves brought over before this was kept). */
+  bunnySince?: number;
   seed: number;
   t: number;
   place: PlaceId;
@@ -244,6 +250,8 @@ export function newState(seed: number, features: Features = ALL_ON): State {
   const personality = personalityFromSeed(seed);
   return {
     name: 'Khina',
+    species: 'bunny',
+    bunnySince: 0,
     seed,
     t: 6 * 60 + 30,
     place: 'burrow',
@@ -255,7 +263,7 @@ export function newState(seed: number, features: Features = ALL_ON): State {
     activity: null,
     recent: [],
     history: [],
-    pantry: { berries: 2, beetles: 3, crusts: 0, peas: 0 },
+    pantry: { berries: 2, clover: 3, crusts: 0, peas: 0 },
     finds: [],
     made: [],
     pieces: [],
@@ -281,5 +289,5 @@ export function newState(seed: number, features: Features = ALL_ON): State {
 export const HISTORY_KEEP = 40;
 
 export function pantryTotal(s: State): number {
-  return s.pantry.berries + s.pantry.beetles + s.pantry.crusts + s.pantry.peas;
+  return FOOD_IDS.reduce((n, f) => n + (s.pantry[f] ?? 0), 0);
 }

@@ -1049,7 +1049,7 @@ def build_shed(b, foliage):
     b.blob((dx - 0.3, y0 - 0.2, 0.9), 0.04, col("2f2f30"), sub=1, amp=0)
     window(b, None, sx - 0.8, y0 - 0.02, 1.0, 0.7, 0.55, frame_hex="5a3e28", shutter_hex="6f8f7a", lit=False)
     rect(sx, sy, W + 0.25, D + 0.25, 0, "shed")
-    # Workbench in front, low enough for a hedgehog: top at 0.45..0.55 as before.
+    # Workbench in front, low enough for a small bunny: top at 0.45..0.55 as before.
     bx, by = 5.0, 4.6
     wood = lin("b08458")
     for k in range(3):
@@ -1193,7 +1193,7 @@ def build_nethut(b, foliage, screen):
     box_uv(0.197, 0.08, TOP + 0.09, 0.004, 0.06, 0.05, col("e48aa0"))  # a tiny picture
     b.blob(at(0.205, 0.19, TOP + 0.035), 0.012, col("7be07a"), sub=1, amp=0)  # power light
     box_uv(0.08, -0.17, TOP + 0.37, 0.07, 0.07, 0.005, col("f3dc6b"))  # a sticky note on top
-    # Keyboard and a hedgehog-sized mouse.
+    # Keyboard and a bunny-sized mouse.
     box_uv(0.3, 0, TOP, 0.16, 0.42, 0.03, rgba(beige * 0.95), bevel=0.012, segs=1)
     for row in range(3):
         for k in range(7):
@@ -1204,8 +1204,9 @@ def build_nethut(b, foliage, screen):
     # A mug of something warm.
     mug = at(0.12, -0.38, TOP)
     b.lathe(mug, [(0, 0.045), (0.09, 0.05)], col("6f9fb4"), segs=12, cap_bottom=True, cap_color=col("5a3a26"))
-    # The cushion Khina sits on.
-    cu = Vector(SPOTS["browse"]["at"])
+    # The cushion Khina sits on: a fixed place on the porch (she sits on its front edge, SPOTS["browse"]),
+    # so moving her spot never moves the cushion under the desk.
+    cu = Vector((18.01, -11.43))
     b.lathe((cu.x, cu.y, 0.0), [(0, 0.27), (0.03, 0.31), (0.06, 0.3), (0.075, 0.24), (0.08, 0.0)], col("c4584a"), segs=20, cap_top=False)
     b.blob((cu.x, cu.y, 0.08), 0.025, col("e7c35a"), sub=1, amp=0)
     # The aerial: a mast just west of the porch, clear of the roof, with a little TV aerial on top.
@@ -1406,7 +1407,7 @@ def build_square(b, glow, foliage):
     b.lathe((wx + 0.2, wy, 1.2), [(0, 0.14), (0.26, 0.17)], lambda co: rgba(lin("8a6040") * (0.85 + 0.2 * math.sin(math.atan2(co.y - wy, co.x - wx - 0.2) * 8))), segs=12, cap_bottom=True, cap_top=False)
     b.lathe((wx + 0.2, wy, 1.4), [(0, 0.17), (0.03, 0.17)], col("3b3b3b"), segs=12, cap_top=False)
     circle(wx, wy, 1.05, "well")
-    # Bench facing the well, deep enough for a hedgehog to sit on (seat top at the spot's z).
+    # Bench facing the well, deep enough for a small bunny to sit on (seat top at the spot's z).
     bx, by = SPOTS["bench"]["at"]
     seat = SPOTS["bench"]["z"]
     wood = lin("b08458")

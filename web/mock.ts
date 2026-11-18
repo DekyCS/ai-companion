@@ -26,7 +26,7 @@ export function mockSource(now: number): PieceSource {
 }
 
 const READINGS: Omit<Reading, 't'>[] = [
-  { clock: '09:20', question: 'How far can a hedgehog walk in a night?', learned: 'A hedgehog can walk one to two kilometres in a single night, mostly looking for beetles and worms.', sources: [{ title: 'Hedgehog facts', url: 'https://example.org/hedgehogs' }, { title: '', url: 'https://en.wikipedia.org/wiki/Hedgehog' }] },
+  { clock: '09:20', question: 'Why do rabbits thump their back feet?', learned: 'A rabbit thumps a back foot to warn others of danger. The thump carries through the ground to nearby burrows.', sources: [{ title: 'Rabbit behaviour', url: 'https://example.org/rabbits' }, { title: '', url: 'https://en.wikipedia.org/wiki/Rabbit' }] },
   { clock: '14:02', question: 'Why do herons stand so still?', learned: 'Herons keep still so fish do not notice them, then strike very fast with their long neck.', sources: [{ title: 'Grey heron', url: 'https://en.wikipedia.org/wiki/Grey_heron' }] },
 ];
 
@@ -39,7 +39,7 @@ export function mockSnap<T extends HudSnap>(s: T): T {
     ? s.diary.map((d) => ({ ...d, day: d.day ?? s.day }))
     : [
         { t: s.t - 300, clock: '07:06', day: s.day, text: 'Slipped a pea pod off Old Wren’s vine before the fog lifted. Nobody saw.', place: 'the vegetable patch', actionId: 'pea' },
-        { t: s.t - 200, clock: '08:55', day: s.day, text: 'Looked up how far a hedgehog walks in a night. Further than I thought, which is a little alarming.', place: 'the internet hut', actionId: 'browse' },
+        { t: s.t - 200, clock: '08:55', day: s.day, text: 'Looked up why rabbits thump their back feet. It is a warning, apparently. I have been warning the furniture.', place: 'the internet hut', actionId: 'browse' },
         { t: s.t - 90, clock: '10:30', day: s.day, text: 'Wrote a poem about the blue button. It is short, like the button.', place: 'the burrow', actionId: 'make' },
       ];
   return {

@@ -7,7 +7,7 @@ import { actionDef } from '../src/world/actions.ts';
 
 const at = (day: number, hour: number, minute = 0) => (day - 1) * 1440 + hour * 60 + minute;
 
-test('a starving hedgehog is only offered food', () => {
+test('a starving bunny is only offered food', () => {
   const s = newState(1);
   s.t = at(1, 10);
   s.needs.fullness = 5;
@@ -34,7 +34,7 @@ test('recently done actions are masked', () => {
   for (const id of s.recent) assert.ok(!ids.includes(id), `${id} should be masked`);
 });
 
-test('an exhausted hedgehog at night goes to bed', () => {
+test('an exhausted bunny at night goes to bed', () => {
   const s = newState(1);
   s.t = at(1, 22);
   s.needs.rest = 8;
@@ -43,7 +43,7 @@ test('an exhausted hedgehog at night goes to bed', () => {
   assert.equal(opts[0]?.def.id, 'sleep');
 });
 
-test('a tired hedgehog at bedtime ranks bed first, but bed is not offered at noon', () => {
+test('a tired bunny at bedtime ranks bed first, but bed is not offered at noon', () => {
   const s = newState(1);
   s.t = at(1, 22);
   s.needs.rest = 30;

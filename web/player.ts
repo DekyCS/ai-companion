@@ -1,8 +1,8 @@
-// The visitor: a little felt bunny the person at the keyboard walks around the village.
-// WASD or the arrow keys move (relative to the camera), Shift runs, Space hops.
+// The visitor: a little felt hedgehog the person at the keyboard walks around the village.
+// WASD or the arrow keys move (relative to the camera), Shift runs, Space hops (a small hop).
 // Animation is procedural, on the pivots art/visitor.py builds:
-//   Visitor > BodyPivot > HeadPivot > Ear.L / Ear.R;  BodyPivot > Tail
-//   Visitor > Paw.FL / Paw.FR / Foot.BL / Foot.BR
+//   Visitor > BodyPivot > HeadPivot > Ear.L / Ear.R / Nose
+//   Visitor > Foot.FL / Foot.FR / Foot.BL / Foot.BR
 // Positions are three.js (x, height, z); layout metres (x, y) sit at (x, h, -y).
 
 import * as THREE from 'three';
@@ -12,6 +12,8 @@ export interface Player {
   object: THREE.Object3D;
   update(dt: number, cameraYaw: number): void;
   readonly moving: boolean;
+  /** Footfalls so far (for footstep sounds). */
+  readonly steps: number;
   readonly wantsControl: boolean;
   takeControl(): void;
   placeAt(x: number, y: number): void;
@@ -22,7 +24,12 @@ const RUN = 4.5;
 const RADIUS = 0.35;
 const MARGIN = 3;
 const GRAVITY = 14;
-const HOP_SPEED = 3.6;
+/** A small hop: about 0.2 m up. */
+const HOP_SPEED = 2.5;
+/** Metres per full step cycle of the scurry. */
+const STRIDE = 0.42;
+/** The feet in order FL, FR, BL, BR: diagonal pairs step together. */
+const FOOT_PHASE = [0, Math.PI, Math.PI, 0];
 
 const MOVE_KEYS: Record<string, 'f' | 'b' | 'l' | 'r'> = {
   KeyW: 'f', ArrowUp: 'f',
@@ -62,9 +69,14 @@ export function createPlayer(model: THREE.Object3D, terrain: Terrain): Player {
   object.name = 'Player';
   object.add(model);
   model.traverse((o) => {
-    if (o instanceof THREE.Mesh) {
-      o.castShadow = true;
-      o.receiveShadow = true;
+    if (!(o instanceof THREE.Mesh)) return;
+    const mat = o.material as THREE.MeshStandardMaterial;
+    o.castShadow = !/^(Shine|Mouth|Eye)/.test(mat.name);
+    o.receiveShadow = true;
+    if (mat.name === 'Spines') mat.roughness = 0.5;
+    if (mat.name === 'Eye') {
+      mat.roughness = 0.04;
+      mat.envMapIntensity = 2.2;
     }
   });
   // GLTFLoader drops the dots from names ("Ear.L" arrives as "EarL").
@@ -72,12 +84,10 @@ export function createPlayer(model: THREE.Object3D, terrain: Terrain): Player {
   const body = find('BodyPivot');
   const head = find('HeadPivot');
   const ears = [find('Ear.L'), find('Ear.R')];
-  const tail = find('Tail');
-  const paws = [find('Paw.FL'), find('Paw.FR')];
-  const feet = [find('Foot.BL'), find('Foot.BR')];
-  const face = ['Nose', 'Muzzle.L', 'Muzzle.R', 'Mouth.L', 'Mouth.R', 'Mouth.Mid'].map(find);
+  const nose = find('Nose');
+  const feet = ['Foot.FL', 'Foot.FR', 'Foot.BL', 'Foot.BR'].map(find);
   const base = new Map<THREE.Object3D, THREE.Vector3>();
-  for (const o of [body, head, tail, ...ears, ...paws, ...feet, ...face]) base.set(o, o.position.clone());
+  for (const o of [body, head, nose, ...ears, ...feet]) base.set(o, o.position.clone());
   const at = (o: THREE.Object3D) => base.get(o)!;
 
   // ---------- keys ----------
@@ -116,7 +126,8 @@ export function createPlayer(model: THREE.Object3D, terrain: Terrain): Player {
   let heading = 0;
   let airY = 0; // height above the ground from a hop (Space)
   let airV = 0;
-  let phase = 0; // hop cycle while moving, 0..1
+  let phase = 0; // step cycle while moving, 0..2π
+  let steps = 0;
   let gaitAmt = 0;
   let speed = 0;
   let wasAir = false;
@@ -128,9 +139,10 @@ export function createPlayer(model: THREE.Object3D, terrain: Terrain): Player {
   const earPitch = [new Spring(), new Spring()];
   const earRoll = [new Spring(120, 8), new Spring(120, 8)];
   const squash = new Spring(260, 14);
+  // The hedgehog's ears are small felt cups: they only flick a little.
   const kick = (v: number) => {
-    for (const s of earPitch) s.vel += v;
-    for (const [i, s] of earRoll.entries()) s.vel += v * 0.6 * (i === 0 ? -1 : 1);
+    for (const s of earPitch) s.vel += v * 0.12;
+    for (const [i, s] of earRoll.entries()) s.vel += v * 0.08 * (i === 0 ? -1 : 1);
   };
 
   function placeAt(x: number, y: number) {
@@ -177,9 +189,9 @@ export function createPlayer(model: THREE.Object3D, terrain: Terrain): Player {
     p.x = lx;
     p.z = -ly;
 
-    // Hops: Space jumps; walking is a run of little hops of its own (below).
+    // Space: a small hop (a little higher on the run).
     if (hopQueued && airY <= 0.001) {
-      airV = HOP_SPEED + (speed > WALK + 0.5 ? 0.6 : 0);
+      airV = HOP_SPEED + (speed > WALK + 0.5 ? 0.5 : 0);
       kick(-9);
       squash.vel -= 3;
     }
@@ -209,84 +221,66 @@ export function createPlayer(model: THREE.Object3D, terrain: Terrain): Player {
     }
 
     // ---------- animation ----------
+    // A scurry: the four feet step in diagonal pairs, quicker the faster you go; the body bobs
+    // and rocks a little and leans into a run. Space is a small hop with a squash on landing.
     const t = clock;
     const moving = speed > 0.12 && !inAir;
-    gaitAmt = damp(gaitAmt, moving ? 1 : 0, moving ? 10 : 6, dt);
-    const hopLen = 0.5 + speed * 0.17;
-    if (gaitAmt > 0.01) {
-      const before = phase;
-      phase = (phase + (Math.max(speed, 0.8) * dt) / hopLen) % 1;
-      if (phase < before) {
-        // Landed one of the walking hops.
-        kick(5 + speed);
-        squash.vel += 1.5 + speed * 0.4;
-      }
-    }
-    if (!moving && gaitAmt < 0.05) phase = 0;
-    // Airborne for the first 75% of a hop, a squash on the ground for the rest.
-    const air = phase < 0.75 ? Math.sin((Math.PI * phase) / 0.75) : 0;
-    const hopH = (0.07 + 0.03 * Math.min(speed, RUN)) * gaitAmt;
-    const lift = air * hopH;
+    gaitAmt = damp(gaitAmt, moving ? 1 : 0, moving ? 10 : 5, dt);
+    if (moving) {
+      const before = Math.floor(phase / Math.PI);
+      // One full step cycle per STRIDE metres (two footfalls), capped so a run stays readable.
+      phase += Math.min(15, (Math.max(speed, 0.6) / STRIDE) * Math.PI * 2) * dt;
+      if (Math.floor(phase / Math.PI) !== before) steps++;
+      if (phase >= Math.PI * 2) phase -= Math.PI * 2;
+    } else if (gaitAmt < 0.05) phase = 0;
     squash.step(0, dt);
-    const sq = squash.value + (phase >= 0.75 ? Math.sin((Math.PI * (phase - 0.75)) / 0.25) * 0.08 * gaitAmt : 0);
     const breathe = 0.014 * Math.sin(t * 2.4) * (1 - gaitAmt);
-
-    const jumpStretch = inAir ? Math.min(0.12, Math.abs(airV) * 0.03) : 0;
-    const sy2 = 1 - sq * 0.6 + breathe + jumpStretch + air * 0.05 * gaitAmt;
-    const sxz = 1 + sq * 0.35 - jumpStretch * 0.4;
+    const jumpStretch = inAir ? Math.min(0.1, Math.abs(airV) * 0.025) : 0;
+    const sq = squash.value;
     const bb = at(body);
-    body.position.set(bb.x, bb.y + lift - sq * 0.03, bb.z);
-    body.scale.set(sxz, sy2, sxz);
-    // Lean into the hop: nose down taking off, up landing; lean into a run.
-    const lean = gaitAmt * (0.12 * Math.cos(Math.PI * phase * 1.33) + speed * 0.025) + (inAir ? -airV * 0.03 : 0);
-    body.rotation.x = damp(body.rotation.x, lean, 14, dt);
+    const bob = Math.abs(Math.sin(phase)) * 0.035 * gaitAmt;
+    body.position.set(bb.x, bb.y + bob - sq * 0.04, bb.z);
+    body.scale.set(1 + sq * 0.3 - jumpStretch * 0.3, 1 - sq * 0.5 + breathe + jumpStretch, 1 + sq * 0.2);
+    const lean = gaitAmt * Math.min(0.14, speed * 0.03) + (inAir ? -airV * 0.025 : 0);
+    body.rotation.x = damp(body.rotation.x, lean, 12, dt);
+    body.rotation.z = damp(body.rotation.z, 0.07 * Math.sin(phase) * gaitAmt, 16, dt);
 
-    // Head: looks about when idle, stays level while hopping, nose wiggles in bursts.
+    // Head: looks about when idle, steady while scurrying; the nose sniffs in bursts.
     lookIn -= dt;
     if (lookIn <= 0) {
       lookTarget = (Math.random() - 0.5) * 1.0;
       lookIn = 1.5 + Math.random() * 3;
     }
     lookYaw = damp(lookYaw, moving ? 0 : lookTarget, 3, dt);
-    head.rotation.set(-body.rotation.x * 0.6 + (moving ? 0 : 0.04 * Math.sin(t * 0.9)), lookYaw, (moving ? 0 : 0.06 * Math.sin(t * 0.6)) * (1 - gaitAmt));
-    const sniff = Math.sin(t * 0.8) > 0.2 ? Math.sin(t * 26) * 0.004 : 0;
-    for (const o of face) {
-      const fb = at(o);
-      o.position.set(fb.x, fb.y + sniff, fb.z + Math.abs(sniff) * 0.5);
-    }
+    head.rotation.set(-body.rotation.x * 0.5 + 0.04 * Math.sin(phase * 2) * gaitAmt + (1 - gaitAmt) * 0.05 * Math.sin(t * 0.9), lookYaw, -body.rotation.z * 0.6);
+    const sniffing = Math.sin(t * 0.8) > 0.2 || gaitAmt > 0.5;
+    const sniff = sniffing ? Math.sin(t * 24) * 0.006 : 0;
+    const nb = at(nose);
+    nose.position.set(nb.x, nb.y + sniff, nb.z + Math.abs(sniff) * 0.5);
 
-    // Ears: swept back by speed, flop on landings, twitch now and then.
+    // Ears: a twitch now and then, a flick on landing.
     twitchIn -= dt;
     if (twitchIn <= 0) {
       const i = Math.random() < 0.5 ? 0 : 1;
-      earRoll[i]!.vel += (i === 0 ? -1 : 1) * (6 + Math.random() * 4);
-      earPitch[i]!.vel -= 4;
+      earRoll[i]!.vel += (i === 0 ? -1 : 1) * (1.5 + Math.random());
       twitchIn = 2 + Math.random() * 5;
     }
-    const back = -Math.min(0.9, speed * 0.16) - (inAir ? 0.25 : 0);
     ears.forEach((ear, i) => {
-      earPitch[i]!.step(back, dt);
+      earPitch[i]!.step(inAir ? -0.06 : 0, dt);
       earRoll[i]!.step(0, dt);
       ear.rotation.set(earPitch[i]!.value, 0, earRoll[i]!.value);
     });
 
-    // Paws reach forward in the air; big back feet push off together.
-    const reach = Math.sin(Math.PI * Math.min(1, phase / 0.75)) * gaitAmt;
-    paws.forEach((paw, i) => {
-      const pb = at(paw);
-      const off = i === 0 ? 0 : 0.04;
-      paw.position.set(pb.x, pb.y + lift * 0.85 + Math.max(0, reach - off) * 0.025, pb.z + (reach - off) * 0.05 * Math.min(1.4, 0.6 + speed * 0.2));
-      paw.rotation.x = -reach * 0.5;
-    });
-    const push = phase < 0.3 ? Math.sin((Math.PI * phase) / 0.3) : 0;
-    feet.forEach((foot) => {
+    // Feet: diagonal pairs step together; in the air they tuck up under the body.
+    const tuck = inAir ? Math.min(1, airY * 6) : 0;
+    feet.forEach((foot, i) => {
       const fb = at(foot);
-      foot.position.set(fb.x, fb.y + lift * 0.9 + push * 0.015 * gaitAmt, fb.z - push * 0.05 * gaitAmt + reach * 0.02);
-      foot.rotation.x = push * 0.45 * gaitAmt;
+      const ph = phase + FOOT_PHASE[i]!;
+      const swing = Math.sin(ph) * 0.1 * gaitAmt * Math.min(1.3, 0.6 + speed * 0.2);
+      const lift = Math.max(0, Math.cos(ph)) * 0.06 * gaitAmt;
+      foot.position.set(fb.x * (1 - 0.25 * tuck), fb.y + lift + tuck * 0.06, fb.z + swing + (fb.z > 0 ? -1 : 1) * 0.05 * tuck);
+      foot.rotation.x = -Math.sin(ph) * 0.4 * gaitAmt;
     });
-
-    // Tail: a little flick with each hop.
-    tail.rotation.set(-air * 0.4 * gaitAmt, Math.sin(t * 3) * 0.08 * (1 - gaitAmt), 0);
   }
 
   return {
@@ -294,6 +288,9 @@ export function createPlayer(model: THREE.Object3D, terrain: Terrain): Player {
     update,
     get moving() {
       return speed > 0.12;
+    },
+    get steps() {
+      return steps;
     },
     get wantsControl() {
       return wants;

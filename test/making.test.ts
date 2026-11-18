@@ -66,8 +66,8 @@ test('readings keep only web links', () => {
 
 test('own ideas get a kind and a real place, or a stand-in', () => {
   const rng = new Rng(3);
-  const a = ownChoice({ action: 'own', reason: '', weight: 5, detail: 'build a tiny raft for beetles', place: 'stream', kind: 'making' }, 'burrow', rng);
-  assert.deepEqual(a, { actionId: 'own.making', detail: 'build a tiny raft for beetles', place: 'stream' });
+  const a = ownChoice({ action: 'own', reason: '', weight: 5, detail: 'build a tiny raft for a ladybird', place: 'stream', kind: 'making' }, 'burrow', rng);
+  assert.deepEqual(a, { actionId: 'own.making', detail: 'build a tiny raft for a ladybird', place: 'stream' });
   const b = ownChoice({ action: 'own', reason: '', weight: 5, detail: 'x', place: 'mars', kind: 'nature' }, 'burrow', rng);
   assert.equal(b.place, 'burrow');
   const c = ownChoice({ action: 'own', reason: '', weight: 5, detail: '', place: '', kind: '' }, 'shed', rng);
@@ -82,7 +82,7 @@ test('the extras budget is let out through the day, not spent by 2 a.m.', () => 
 });
 
 test('the same question asked twice is recognised', () => {
-  assert.ok(sameQuestion('How far do hedgehogs walk at night to find snails?', 'how far do hedgehogs walk at night to find snails'));
+  assert.ok(sameQuestion('Why do rabbits thump their back feet?', 'why do rabbits thump their back feet'));
   assert.ok(!sameQuestion('Why do herons stand still?', 'Why do herons fly?'));
   assert.ok(!sameQuestion('?', '!'));
 });
