@@ -47,6 +47,11 @@ export function mockSnap<T extends HudSnap>(s: T): T {
     diary,
     pieces,
     readings,
+    posts: [
+      { t: s.t - 400, clock: '09:12', text: 'Fog all morning. I sat at the stream and the heron did not move once. Neither did I, for a while.', about: 'the fog at the stream' },
+      { t: s.t - 120, clock: '13:40', text: 'Made a little picture of the bakery window in the rain. The glass came out wobbly, which is how it looks.', about: 'the bakery picture', piece: { id: pieces[0]!.id, title: pieces[0]!.title, form: pieces[0]!.form }, sent: { bluesky: 'https://bsky.app/profile/example/post/1' } },
+    ],
+    postsTo: ['bluesky'],
     moodArc,
     pages: [
       { day: Math.max(1, s.day - 1), text: 'The lantern still does not light. I fiddled with it twice and said so to the bench. Bramwell gave me crusts, which helped more than the lantern did.' },

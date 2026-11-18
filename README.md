@@ -43,7 +43,20 @@ On `npm run live`, Khina can also:
 - make real pieces: pictures (SVG), poems, short stories, songs (a tune the page plays) and little games, kept in `<save folder>/pieces/` and shown in the Gallery;
 - look things up at the internet hut: a real web search, read-only; what Khina found shows under Internet and turns into memories.
 
-These need `--model` and stay within `KHINA_EXTRAS_CAP_USD` (default $0.30 a day, inside the daily cap).
+- post a few short notes a day at the internet hut (`KHINA_POSTS_PER_DAY`, default 3), shown under Internet → posts.
+
+These need `--model`. Pieces and lookups stay within `KHINA_EXTRAS_CAP_USD` (default $0.30 a day, inside the daily cap),
+let out evenly through the day so a fast clock can't spend it all after midnight. `/spend` shows what Claude has cost per job.
+
+### Giving Khina an account
+
+Posts stay on the site until an account is connected. Someone makes the account by hand (a bot can't sign up),
+marks it as automated, and sets its keys as Railway variables; `src/outlets.ts` only ever posts (no replies,
+likes, follows or messages), with no links, mentions, hashtags or selling.
+
+- Bluesky (free): `BSKY_HANDLE` and `BSKY_APP_PASSWORD` (Settings → Privacy and security → App passwords).
+- X (X bills about $0.015 a post): `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_SECRET` from a read+write app at developer.x.com.
+- `KHINA_PUBLIC_URL` links a shared piece on Bluesky.
 Pieces are served at `/pieces` (list), `/pieces/<id>.json`, `.svg` and `.html` (games run sandboxed, no network).
 
 ## Run days as text
@@ -53,7 +66,7 @@ npm run day -- --offline          # one day on code alone, free
 npm run day                       # one day with Claude choosing and writing (needs a key)
 npm run long -- --compare         # 40 days × 3 seeds, phase 2 off vs on, repetition measures (free)
 npm run copies -- --compare       # 5 identical copies × 40 days: do they become individuals? (free)
-npm test                          # 41 tests
+npm test                          # 58 tests
 npm run check                     # type-check the sim and the page
 ```
 

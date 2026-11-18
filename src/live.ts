@@ -23,7 +23,8 @@ import { Rng } from './rng.ts';
 import { Sim } from './sim.ts';
 import { PieceStore } from './pieces.ts';
 import { TOY_CSP } from './mind/making.ts';
-import { newState, type Completed, type PieceRef, type Reading, type State } from './state.ts';
+import { makeOutlets, sendEverywhere } from './outlets.ts';
+import { newState, type Completed, type PieceRef, type Post, type Reading, type State } from './state.ts';
 import { clock, dayOf, isDark, partOfDay, weekday } from './time.ts';
 import { actionDef } from './world/actions.ts';
 import { PLACES } from './world/places.ts';
@@ -99,6 +100,8 @@ let epochMs: number | null = null;
 if (realClock) epochMs = saved?.epochMs != null && (saved.rate ?? 1) === rate ? saved.epochMs : anchorNow();
 
 // Real pieces Khina makes live next to the save (on the server's volume), or in the run folder.
+// Khina's posts go to these accounts too, if their keys are set; otherwise they stay on the site.
+const outlets = values.model ? makeOutlets() : [];
 const store = new PieceStore(persistPath ? join(dirname(persistPath), 'pieces') : join(outDir, 'pieces'));
 
 const clients = new Set<ServerResponse>();
@@ -111,6 +114,16 @@ const sim = new Sim(s, {
   onLine: values.quiet ? undefined : (line) => console.log(line),
   onEvent: (e) => {
     if (e.type === 'tick') return;
+    if (e.type === 'post') {
+      const post = e.post as Post;
+      broadcast('post', { post: withClock(post) });
+      if (outlets.length)
+        void sendEverywhere(outlets, post).then((sent) => {
+          post.sent = sent;
+          console.log(`          ✉ sent: ${Object.entries(sent).map(([k, v]) => `${k} ${v}`).join(' · ')}`);
+          broadcast('snap', { snap: snapshot(), event: { type: 'sent' } });
+        });
+    }
     if (e.type === 'piece') broadcast('piece', { piece: withClock(e.piece as PieceRef) });
     if (e.type === 'reading') broadcast('reading', { reading: withClock(e.reading as Reading) });
     broadcast('snap', { snap: snapshot(), event: brief(e) });
@@ -180,6 +193,8 @@ function snapshot() {
       .map((r) => ({ t: r.end, clock: clock(r.end), day: dayOf(r.end), text: r.diary, place: PLACES[r.place].short, actionId: r.actionId })),
     pieces: (s.pieces ?? []).slice(-12).map(withClock),
     readings: (s.readings ?? []).slice(-8).map(withClock),
+    posts: (s.posts ?? []).slice(-10).map(withClock),
+    postsTo: outlets.map((o) => o.name),
     pages: s.pages.slice(-5).map((p) => ({ day: p.day, text: p.text })),
     moodArc: sim.hours.slice(-48).map((h) => ({ t: h.t, mood: h.mood })),
   };
@@ -295,6 +310,7 @@ const server = createServer(async (req, res) => {
 
 server.listen(port, host, () => {
   const pace = realClock ? (rate === 1 ? 'real time, on the wall clock' : `${rate}× real time (a Khina day every ${+(24 / rate).toFixed(2)} h)`) : `${speed} game minute${speed === 1 ? '' : 's'} per second`;
+  if (outlets.length) console.log(`Posts also go to: ${outlets.map((o) => o.name).join(', ')}`);
   console.log(`Khina · seed ${seed} · brain: ${mind.kind === 'model' ? 'Claude' : 'code only'} · ${pace}${saved ? ' · picked up from the last save' : ''}`);
   console.log(`Open http://${host === '0.0.0.0' ? 'localhost' : host}:${port}  (events: ${outDir}/events.jsonl)\n`);
 });

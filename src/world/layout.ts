@@ -99,6 +99,7 @@ export const SPOTS: Record<string, Spot> = {
   timetable: { at: [44.4, -5.6], z: 0.45, face: [45.4, -5.6], pose: 'stand' },
   // The internet hut: Khina sits on a cushion at the old computer on the porch.
   browse: { at: [18.01, -11.43], z: 0.07, face: [17.31, -11.0], pose: 'sit' },
+  post: { at: [18.01, -11.43], z: 0.07, face: [17.31, -11.0], pose: 'sit' },
   nethut_idle: { at: [18.95, -11.05], face: [18.95, -13], pose: 'stand' },
 };
 

@@ -212,11 +212,15 @@ export const models = {
   diary: 'claude-haiku-5-5',
   make: 'claude-sonnet-5-5',
   web: 'claude-sonnet-5-5',
+  post: 'claude-haiku-5-5',
   // The night page. At a fast clock (24 pages a real day) the live server sets KHINA_NIGHT_MODEL to Sonnet.
   sleep: (process.env.KHINA_NIGHT_MODEL ?? 'claude-opus-5-5') as 'claude-opus-5-5' | 'claude-sonnet-5-5' | 'claude-haiku-5-5',
 } as const;
 
-export const effort = { decide: 'low', diary: 'low', make: 'medium', web: 'low', sleep: 'medium' } as const;
+export const effort = { decide: 'low', diary: 'low', make: 'medium', web: 'low', post: 'low', sleep: 'medium' } as const;
+
+/** Most posts Khina may write per real day (each is one small Haiku call; sending is free on Bluesky, about $0.015 on X). */
+export const postsPerDay = Number(process.env.KHINA_POSTS_PER_DAY ?? 3) || 3;
 
 /** US dollars per web search (server-side search tool). Check the current price. */
 export const webSearchUsd = 0.01;

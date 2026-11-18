@@ -3,7 +3,7 @@
 
 import { mind, taste } from '../config.ts';
 import type { Rng } from '../rng.ts';
-import type { Completed, Origin, Reading, State } from '../state.ts';
+import type { Completed, Origin, PieceRef, Reading, State } from '../state.ts';
 import type { PieceDraft, PieceRequest } from './making.ts';
 import { actionDef, OWN_FALLBACK, OWN_KINDS, type OwnKind } from '../world/actions.ts';
 import { PLACE_IDS, type PlaceId } from '../world/places.ts';
@@ -55,6 +55,10 @@ export interface Mind {
   makePiece?(s: State, req: PieceRequest): Promise<PieceDraft | string>;
   /** Looks something up on the web; returns what was found, or why not. */
   browse?(s: State, question: string, onMind: string): Promise<Reading | string>;
+  /** Can Khina post right now (model up, today's few posts not used yet)? */
+  canPost?(): boolean;
+  /** Writes a short public post; returns it checked, or why not. */
+  writePost?(s: State, about: string, recentLines: string[], latest: PieceRef | undefined, hoursAgo: number | null): Promise<{ text: string; sharePiece: boolean } | string>;
   stats(): MindStats;
 }
 
@@ -147,7 +151,7 @@ function autopilot(s: State, list: Option[], rng: Rng, why: string, origin: Orig
 
 const round = (x: number) => Math.round(x * 1000) / 1000;
 
-const ALWAYS_OFFERED = new Set(['own', 'browse']);
+const ALWAYS_OFFERED = new Set(['own', 'browse', 'post']);
 
 /** When code should not bother asking the model. */
 export function autopilotReason(s: State, list: Option[], m: Mind): string | null {

@@ -69,8 +69,21 @@ export interface Reading {
   sources: { title: string; url: string }[];
 }
 
+/** A short public post Khina wrote at the internet hut (shown on the site; sent out only if an account is connected). */
+export interface Post {
+  t: number;
+  text: string;
+  /** What Khina meant to post about. */
+  about: string;
+  /** The piece it shares, if any. */
+  piece?: { id: string; title: string; form: PieceForm };
+  /** Where it went out, e.g. { bluesky: 'https://bsky.app/…' }; a failure reads 'error: …'. */
+  sent?: Record<string, string>;
+}
+
 export type WorkResult =
   | { kind: 'piece'; piece: PieceRef }
+  | { kind: 'post'; post: Post }
   | { kind: 'web'; reading: Reading; again?: boolean }
   | { kind: 'none'; why: string };
 
@@ -186,6 +199,8 @@ export interface State {
   pieces: PieceRef[];
   /** Things looked up at the internet hut (live server only). */
   readings: Reading[];
+  /** Short posts Khina wrote for the internet (live server only). */
+  posts?: Post[];
   world: WorldState;
   personality: Personality;
   rngState: number;

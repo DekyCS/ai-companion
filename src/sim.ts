@@ -210,7 +210,7 @@ export class Sim {
       // Making and the internet only while there is budget for the real thing, so the diary never
       // says Khina made something that is not in the Gallery.
       const work = modelUp && !!this.mind.canWork?.();
-      s.world.can = { make: work, own: modelUp, net: work };
+      s.world.can = { make: work, own: modelUp, net: work, post: modelUp && !!this.mind.canPost?.() };
     }
     const d = await decide(s, this.rng, this.mind, ++this.decisionCount);
     this.decisions.push(d);
@@ -285,6 +285,19 @@ export class Sim {
       this.jobs.set(act.decisionId, Promise.resolve({ kind: 'web', reading: before, again: true }));
       return;
     }
+    if (def.work === 'post') {
+      if (!m.writePost || !m.canPost?.()) return;
+      const latest = s.pieces.at(-1);
+      const hoursAgo = latest ? (s.t - latest.t) / 60 : null;
+      const recent = this.log.filter((r) => r.diary).slice(-5).map((r) => r.diary as string);
+      const job = m.writePost(s, act.detail, recent, latest, hoursAgo).then((p): WorkResult =>
+        typeof p === 'string'
+          ? { kind: 'none', why: p }
+          : { kind: 'post', post: { t: s.t, text: p.text, about: act.detail, ...(p.sharePiece && latest ? { piece: { id: latest.id, title: latest.title, form: latest.form } } : {}) } },
+      );
+      this.jobs.set(act.decisionId, job.catch((err: unknown) => ({ kind: 'none', why: String(err).slice(0, 120) })));
+      return;
+    }
     if (!m.canWork?.()) return;
     const mindLine = onMind(s, 1, false)[0] ?? '';
     let job: Promise<WorkResult> | null = null;
@@ -322,6 +335,12 @@ export class Sim {
       if (s.readings.length > 60) s.readings.splice(0, s.readings.length - 60);
       this.event({ type: 'reading', reading: r.reading });
       this.onLine(`${' '.repeat(10)}⌕ looked up "${r.reading.question}": ${r.reading.learned}`);
+    } else if (r.kind === 'post') {
+      s.posts ??= [];
+      s.posts.push(r.post);
+      if (s.posts.length > 100) s.posts.splice(0, s.posts.length - 100);
+      this.event({ type: 'post', post: r.post });
+      this.onLine(`${' '.repeat(10)}✉ posted: ${r.post.text}`);
     } else {
       this.event({ type: 'work-failed', why: r.why });
       this.onLine(`${' '.repeat(10)}✗ real work failed: ${r.why}`);

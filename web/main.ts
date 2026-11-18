@@ -451,6 +451,7 @@ const events = new EventSource('/events');
 events.addEventListener('snap', (e) => onSnap(JSON.parse((e as MessageEvent).data).snap));
 events.addEventListener('piece', (e) => hud.piece(JSON.parse((e as MessageEvent).data).piece));
 events.addEventListener('reading', (e) => hud.reading(JSON.parse((e as MessageEvent).data).reading));
+events.addEventListener('post', (e) => hud.post(JSON.parse((e as MessageEvent).data).post));
 events.addEventListener('clock', (e) => {
   clockT = JSON.parse((e as MessageEvent).data).t;
   clockAt = performance.now();

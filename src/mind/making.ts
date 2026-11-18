@@ -3,7 +3,7 @@
 // the thing, and code checks every piece before anyone sees it: pieces are shown on a public page.
 
 import type { Rng } from '../rng.ts';
-import type { PieceForm, Reading, State } from '../state.ts';
+import type { PieceForm, PieceRef, Reading, State } from '../state.ts';
 import { moodWord } from '../body.ts';
 import { characterSheet } from './prompts.ts';
 
@@ -273,4 +273,57 @@ export function checkReading(json: unknown, asked: string, t: number): Reading |
     .filter((x) => /^https?:\/\/[^\s"'<>]+$/i.test(x.url))
     .slice(0, 2);
   return { t, question: cleanText(j.question, 120) || asked, learned, sources };
+}
+
+// ---------- posts: a few short public lines a day ----------
+
+export const postSystem = (s?: State) => `You write a short public post for Khina, a small hedgehog who lives in a forest village and has walked to the old computer in the internet hut. Strangers on the internet may read it.
+
+Reply with JSON:
+- text: the post, first person as Khina, 1 to 3 short sentences, under 220 characters. About Khina's own day, a place in the village, or a thing Khina made. Plain short words, a little dry, the way Khina's diary sounds.
+- sharePiece: true if the post is about the latest thing Khina made (it will be linked), else false.
+
+Rules:
+- Stick to what is in the facts you are given. Do not invent events.
+- No links, no @names, no hashtags, no emojis, no exclamation marks.
+- Never ask anyone for anything: no follows, likes, money, crypto, tokens or buying. Never sell or promote.
+- Nothing about real people, news or politics. Gentle and kind. Never use the words cozy, cosy, adventure, journey, magical, delightful or whimsical.
+
+${characterSheet(s)}`;
+
+export function postPrompt(about: string, recentLines: string[], latest: PieceRef | undefined, hoursAgo: number | null): string {
+  return [
+    `Khina wants to post about: ${about}`,
+    latest && hoursAgo !== null ? `The latest thing Khina made: "${latest.title}" (${latest.form === 'toy' ? 'a little game' : `a ${latest.form}`}), ${hoursAgo < 1 ? 'just now' : `${Math.round(hoursAgo)} hours ago`}${latest.about ? `, from the idea: ${latest.about}` : ''}.` : '',
+    recentLines.length ? `Khina's diary lately:\n${recentLines.map((l) => `- ${l}`).join('\n')}` : '',
+    'Write the post as JSON.',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+export const POST_SCHEMA = {
+  type: 'object',
+  properties: { text: { type: 'string' }, sharePiece: { type: 'boolean' } },
+  required: ['text', 'sharePiece'],
+  additionalProperties: false,
+} as const;
+
+/** Words a gentle hedgehog's post never needs: scams and selling are what bot accounts get pulled into. */
+const POST_NEVER = /\b(crypto|token|coin|nft|airdrop|wallet|giveaway|donat\w*|buy|sell|price|follow me|dm me|link in bio|subscribe)\b/i;
+
+/** A post safe to show strangers: no links, mentions or hashtags, short, and nothing that sells. */
+export function cleanPost(raw: unknown): string | null {
+  let t = cleanText(raw, 600)
+    .replace(/https?:\/\/\S+|www\.\S+|\b[a-z0-9-]+\.(com|net|org|io|app|xyz|ai|co)\b\S*/gi, '')
+    .replace(/(^|\s)@[\w.-]+/g, '$1')
+    .replace(/#(\w+)/g, '$1')
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '')
+    .replace(/!/g, '.')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^["“]+|["”]+$/g, '');
+  if (t.length > 260) t = `${t.slice(0, 257).replace(/\s+\S*$/, '')}...`;
+  if (t.split(' ').length < 4 || POST_NEVER.test(t)) return null;
+  return t;
 }

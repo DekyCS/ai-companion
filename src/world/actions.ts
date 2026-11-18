@@ -70,7 +70,7 @@ export interface ActionDef {
    * Real work done while the action runs (live server with the model on): 'piece' makes a real
    * drawing, poem, song or game; 'web' looks something up online. The outcome reads act.result.
    */
-  work?: 'piece' | 'web';
+  work?: 'piece' | 'web' | 'post';
 }
 
 const FOOD: Record<FoodId, { one: string; fullness: number }> = {
@@ -893,6 +893,34 @@ export const ACTIONS: ActionDef[] = [
     },
   },
   {
+    id: 'post',
+    place: 'nethut',
+    label: 'write a short post for the internet, about my day or something I made',
+    doing: 'typing a post on the old computer',
+    gist: 'posting on the internet',
+    topic: 'social',
+    effort: 'easy',
+    minutes: [15, 30],
+    effects: { company: 12, making: 6, novelty: 6, rest: -2 },
+    detailAsk: 'what the post is about, e.g. "the heron song I made"',
+    details: ['the rain on the oak today', 'the picture I drew of the stream'],
+    blocked: ({ s }) => (s.world.can?.post ? null : 'the old computer said "try again tomorrow"'),
+    work: 'post',
+    outcome: (_c, act) => {
+      const r = act.result;
+      if (r?.kind === 'post')
+        return {
+          text: `typed a short post for the internet on the old computer: "${r.post.text}"`,
+          thought: { key: 'posted', text: `Posted on the internet about ${act.detail}`, value: 2, hours: 12 },
+        };
+      return {
+        text: 'sat at the old computer to write a post, but could not find the words',
+        extra: { making: -3 },
+        thought: { key: 'no-post', text: 'Could not think what to post', value: -1, hours: 3 },
+      };
+    },
+  },
+  {
     id: 'own',
     place: 'here',
     label: 'something else entirely, an idea of my own',
@@ -984,7 +1012,7 @@ const OWN_DEFS: Record<string, ActionDef> = Object.fromEntries(
 export const ACTION_BY_ID: Record<string, ActionDef> = Object.fromEntries(ACTIONS.map((a) => [a.id, a]));
 export const ACTION_IDS = ACTIONS.map((a) => a.id);
 /** Actions beyond the fixed village life (live server only; blocked in experiments). */
-export const BEYOND_IDS = new Set(['make', 'browse', 'own']);
+export const BEYOND_IDS = new Set(['make', 'browse', 'own', 'post']);
 
 export function actionDef(id: string): ActionDef {
   const def = ACTION_BY_ID[id] ?? OWN_DEFS[id];

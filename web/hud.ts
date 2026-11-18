@@ -27,6 +27,14 @@ export interface Reading {
   learned: string;
   sources: { title: string; url: string }[];
 }
+export interface Post {
+  t: number;
+  clock?: string;
+  text: string;
+  about: string;
+  piece?: { id: string; title: string; form: PieceForm };
+  sent?: Record<string, string>;
+}
 export interface DiaryLine {
   t: number;
   clock: string;
@@ -61,6 +69,9 @@ export interface HudSnap {
   diary: DiaryLine[];
   pieces?: PieceRef[];
   readings?: Reading[];
+  posts?: Post[];
+  /** Accounts Khina's posts also go to (e.g. bluesky, x); empty means the site only. */
+  postsTo?: string[];
   pages?: { day: number; text: string }[];
   moodArc?: { t: number; mood: number }[];
 }
@@ -103,6 +114,7 @@ export interface Hud {
   update(s: HudSnap): void;
   piece(p: PieceRef): void;
   reading(r: Reading): void;
+  post(p: Post): void;
   setMode(m: Mode): void;
   setSource(src: PieceSource): void;
   show(): void;
@@ -190,8 +202,10 @@ function describe(a: HudActivity | null): { title: string; status: string; chip:
       ? `Making ${detail || 'something'}`
       : a.actionId === 'browse'
         ? `Looking up “${detail || 'something'}” on the internet`
-        : capital(a.doing) + (detail ? ` (${detail})` : '');
-  const chip = own ? 'own idea' : a.actionId === 'make' ? 'making' : a.actionId === 'browse' ? 'online' : '';
+        : a.actionId === 'post'
+          ? `Writing a post about ${detail || 'the day'}`
+          : capital(a.doing) + (detail ? ` (${detail})` : '');
+  const chip = own ? 'own idea' : a.actionId === 'make' ? 'making' : a.actionId === 'browse' || a.actionId === 'post' ? 'online' : '';
   if (a.kind === 'walk') {
     const to = placeShort(a.place);
     const purpose = own ? lower(detail) : a.actionId === 'make' ? `make ${detail}` : a.actionId === 'browse' ? `look up “${detail}”` : a.label + (detail ? ` (${detail})` : '');
@@ -425,14 +439,14 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
   const TABS: Record<SheetKind, [string, string][]> = {
     diary: [['recent', 'recent'], ['nights', 'nights']],
     gallery: [['all', 'everything'], ['picture', 'pictures'], ['words', 'words'], ['song', 'songs'], ['toy', 'games']],
-    internet: [],
+    internet: [['looked', 'looked up'], ['posts', 'posts']],
   };
-  const TITLES: Record<SheetKind, string> = { diary: 'Diary', gallery: 'Things Khina made', internet: 'Looked up on the internet' };
+  const TITLES: Record<SheetKind, string> = { diary: 'Diary', gallery: 'Things Khina made', internet: 'Khina on the internet' };
 
-  function openSheet(kind: SheetKind, opts: { piece?: string } = {}) {
+  function openSheet(kind: SheetKind, opts: { piece?: string; tab?: string } = {}) {
     stopSong?.();
     open = kind;
-    tab = TABS[kind][0]?.[0] ?? '';
+    tab = opts.tab ?? TABS[kind][0]?.[0] ?? '';
     viewing = opts.piece ?? null;
     sheet.hidden = false;
     scrim.hidden = false;
@@ -510,6 +524,7 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     if (!id) return null;
     if (id === 'make' || id === 'draw') return el('span', 'chip orange', 'made something');
     if (id === 'browse') return el('span', 'chip moss', 'online');
+    if (id === 'post') return el('span', 'chip moss', 'posted');
     if (id.startsWith('own.')) return el('span', 'chip moss', 'own idea');
     return null;
   }
@@ -553,7 +568,50 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     body.replaceChildren(...out);
   }
 
+  const OUTLET_NAME: Record<string, string> = { bluesky: 'Bluesky', x: 'X' };
+
+  function renderPosts(s: HudSnap) {
+    const posts = [...(s.posts ?? [])].reverse();
+    const where = (s.postsTo ?? []).map((k) => OUTLET_NAME[k] ?? k);
+    const note = el('div', 'empty', where.length ? `Khina's posts also go to ${where.join(' and ')}.` : 'Posts stay on this page for now: no account is connected yet.');
+    if (!posts.length) {
+      body.replaceChildren(el('div', 'empty', 'Khina has not posted anything yet. A few times a day, the old computer at the internet hut can post a short note.'), note);
+      return;
+    }
+    body.replaceChildren(
+      ...posts.map((p) => {
+        const e = el('div', 'entry reading');
+        const top = el('div', 'top');
+        top.append(el('span', 'chip moss', 'posted'), el('span', 't', `${p.clock ?? ''} · ${ago(s.t, p.t)}`));
+        e.append(top, el('p', '', p.text));
+        const src = el('div', 'src');
+        if (p.piece) {
+          const b = el('a', '', `see “${p.piece.title}”`);
+          b.href = `#piece=${p.piece.id}`;
+          b.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            openSheet('gallery', { piece: p.piece!.id });
+          });
+          src.append(b);
+        }
+        for (const [k, v] of Object.entries(p.sent ?? {})) {
+          const u = safeLink(v);
+          if (!u) continue;
+          const a = el('a', '', `on ${OUTLET_NAME[k] ?? k}`);
+          a.href = u.href;
+          a.target = '_blank';
+          a.rel = 'noopener nofollow ugc';
+          src.append(a);
+        }
+        if (src.children.length) e.append(src);
+        return e;
+      }),
+      note,
+    );
+  }
+
   function renderInternet(s: HudSnap) {
+    if (tab === 'posts') return renderPosts(s);
     const reads = [...(s.readings ?? [])].reverse();
     if (!reads.length) {
       body.replaceChildren(el('div', 'empty', 'Khina has not looked anything up yet. The old computer is at the internet hut.'));
@@ -719,8 +777,16 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
   });
   lastRead.addEventListener('click', () => openSheet('internet'));
 
+  // A shared link like /#piece=<id> opens that piece once the first snapshot is in.
+  let linkedPiece = /^#piece=([a-z0-9]+-[a-z0-9]+)$/.exec(location.hash)?.[1] ?? null;
+
   function update(s: HudSnap) {
     snap = s;
+    if (linkedPiece) {
+      const id = linkedPiece;
+      linkedPiece = null;
+      openSheet('gallery', { piece: id });
+    }
     for (const [key] of NEEDS) {
       const v = key === 'mood' ? s.mood : (s.needs[key] ?? 0);
       const n = needBars.get(key)!;
@@ -767,6 +833,9 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     },
     reading(r) {
       showToast(`Khina looked up “${r.question}”`, 'read', () => openSheet('internet'));
+    },
+    post(p) {
+      showToast(`Khina posted: “${p.text.length > 70 ? `${p.text.slice(0, 67)}...` : p.text}”`, 'read', () => openSheet('internet', { tab: 'posts' }));
     },
     setMode(m) {
       mode = m;

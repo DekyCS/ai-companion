@@ -159,7 +159,7 @@ export interface WorldState {
    * (a store to keep them), Khina's own ideas (needs the model), the internet (model plus budget).
    * Absent or all false in experiments, so they never change what experiments measure.
    */
-  can?: { make: boolean; own: boolean; net: boolean };
+  can?: { make: boolean; own: boolean; net: boolean; post?: boolean };
 }
 
 const FIND_COLOURS = ['red', 'blue', 'green', 'white', 'yellow', 'black', 'chipped', 'tiny', 'odd-shaped'];

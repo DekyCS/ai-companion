@@ -11,12 +11,12 @@ import Anthropic, {
 } from '@anthropic-ai/sdk';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { budget, cacheReadFactor, cacheWriteFactor, effort, models, prices, spendLedgerPath, webSearchUsd } from '../config.ts';
+import { budget, cacheReadFactor, cacheWriteFactor, effort, models, postsPerDay, prices, spendLedgerPath, webSearchUsd } from '../config.ts';
 import type { Rng } from '../rng.ts';
-import type { Completed, Reading, State } from '../state.ts';
+import type { Completed, PieceRef, Reading, State } from '../state.ts';
 import { stamp } from '../time.ts';
 import type { Candidate, Mind, MindStats, Proposal, Sense } from './decide.ts';
-import { checkPiece, checkReading, makePrompt, makeSystem, MAKE_SCHEMA, webPrompt, webSystem, WEB_SCHEMA, type PieceDraft, type PieceRequest } from './making.ts';
+import { checkPiece, checkReading, cleanPost, makePrompt, makeSystem, MAKE_SCHEMA, postPrompt, postSystem, POST_SCHEMA, webPrompt, webSystem, WEB_SCHEMA, type PieceDraft, type PieceRequest } from './making.ts';
 import { decidePrompt, DECIDE_SCHEMA, decideSystem, diaryPrompt, DIARY_SCHEMA, diarySystem, reflectSystem } from './prompts.ts';
 import { reflectPrompt, REFLECT_SCHEMA, type ReflectInput, type ReflectOutput } from './sleep.ts';
 import type { Option } from './score.ts';
@@ -84,6 +84,19 @@ class SpendLedger {
   /** The part of today's spend that went on real pieces and the internet. */
   extrasToday(): number {
     return this.load()[`${today()} extras`] ?? 0;
+  }
+
+  /** How many of a counted thing (e.g. posts) happened today. */
+  countToday(name: string): number {
+    return this.load()[`${today()} ${name}`] ?? 0;
+  }
+
+  bump(name: string): void {
+    const data = this.load();
+    const k = `${today()} ${name}`;
+    data[k] = (data[k] ?? 0) + 1;
+    mkdirSync(dirname(this.path), { recursive: true });
+    writeFileSync(this.path, JSON.stringify(data, null, 2));
   }
 
   add(usd: number, extra = false): void {
@@ -179,6 +192,24 @@ export class ClaudeMind implements Mind {
     return checkPiece(out.json, req);
   }
 
+  /** A few short public posts a day, while the model is up. */
+  canPost(now = new Date()): boolean {
+    // Spread through the day like the extras budget: one at midnight, the rest every few hours.
+    return this.unavailable() === null && this.ledger.countToday('posts') < Math.ceil(extrasAllowance(postsPerDay, now) - 1e-9);
+  }
+
+  /** Writes a short public post. Code checks it (no links, mentions, selling) before anyone sees it. */
+  async writePost(s: State, about: string, recentLines: string[], latest: PieceRef | undefined, hoursAgo: number | null): Promise<{ text: string; sharePiece: boolean } | string> {
+    if (!this.canPost()) return 'no posts left today';
+    const out = await this.call('post', s, postSystem(s), postPrompt(about, recentLines, latest, hoursAgo), POST_SCHEMA, 600);
+    if (!out.ok) return out.why;
+    const j = (out.json ?? {}) as { text?: unknown; sharePiece?: unknown };
+    const text = cleanPost(j.text);
+    if (!text) return 'the post did not pass the checks';
+    this.ledger.bump('posts');
+    return { text, sharePiece: j.sharePiece === true && !!latest };
+  }
+
   /** Looks something up on the web (search only, read-only). */
   async browse(s: State, question: string, onMind: string): Promise<Reading | string> {
     if (!this.canWork()) return 'no budget for the internet today';
@@ -237,7 +268,7 @@ export class ClaudeMind implements Mind {
   }
 
   private async call(
-    job: 'decide' | 'diary' | 'sleep' | 'make' | 'web',
+    job: 'decide' | 'diary' | 'sleep' | 'make' | 'web' | 'post',
     s: State,
     system: string,
     prompt: string,
