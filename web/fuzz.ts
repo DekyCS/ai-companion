@@ -104,7 +104,11 @@ export function addFuzz(root: THREE.Object3D, opts: { layers?: number; density?:
     }
     shells.castShadow = false;
     shells.receiveShadow = true;
-    shells.frustumCulled = false;
+    // Culled off screen like the mesh itself, with its bounds grown by the fur (out along the normals,
+    // and the droop). The geometry's own bounds already take in its shape keys (the ears lying back).
+    if (!geo.boundingSphere) geo.computeBoundingSphere();
+    shells.boundingSphere = geo.boundingSphere!.clone();
+    shells.boundingSphere.radius += len * 1.3;
     mesh.add(shells);
   }
 }

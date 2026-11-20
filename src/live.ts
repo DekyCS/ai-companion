@@ -18,17 +18,16 @@
 // POST /notes/<id>/show need the Keeper's key, like answering asks.
 
 import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { stat } from 'node:fs/promises';
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { stripTypeScriptTypes } from 'node:module';
-import { dirname, extname, join, normalize, sep } from 'node:path';
+import { dirname, join, normalize, sep } from 'node:path';
 import { parseArgs } from 'node:util';
 import { budget } from './config.ts';
 import { fromHedgehogDays, migrateSave } from './migrate.ts';
 import { makeMind } from './minds.ts';
 import { Rng } from './rng.ts';
 import { Sim } from './sim.ts';
+import { createStaticFiles } from './static.ts';
 import { PieceStore } from './pieces.ts';
 import { TOY_CSP } from './mind/making.ts';
 import { makeOutlets, sendEverywhere } from './outlets.ts';
@@ -251,23 +250,18 @@ function broadcast(type: string, data: unknown) {
 setInterval(() => broadcast('clock', { t: s.t }), 1000).unref();
 
 // ---------- files ----------
+// Compressed, with ETags and cache headers: see src/static.ts.
 const ROOT = process.cwd();
-const TYPES: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.ts': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.glb': 'model/gltf-binary',
-  '.json': 'application/json',
-  '.png': 'image/png',
-};
+const files = createStaticFiles(ROOT);
+void files.warm();
 /** Only these folders are served, and only on this machine (127.0.0.1). */
 const ALLOWED = ['web', join('art', 'export'), join('node_modules', 'three'), join('src', 'world', 'layout.ts'), join('src', 'world', 'places.ts')];
 
 function resolvePath(url: string): string | null {
   let path = decodeURIComponent(url.split('?')[0] ?? '/');
   if (path === '/') path = '/web/index.html';
-  if (path.startsWith('/vendor/three/')) path = `/node_modules/three/${path.slice('/vendor/three/'.length)}`;
+  // three.js, as /vendor/three/ or (from index.html, so the URL changes with the version) /vendor/three@0.181.2/.
+  path = path.replace(/^\/vendor\/three(@[\w.-]+)?\//, '/node_modules/three/');
   const rel = normalize(path).replace(/^[/\\]+/, '');
   if (rel.split(sep).includes('..')) return null;
   return ALLOWED.some((a) => rel === a || rel.startsWith(a + sep)) ? join(ROOT, rel) : null;
@@ -514,22 +508,7 @@ const server = createServer({ connectionsCheckingInterval: 5_000 }, async (req, 
     res.writeHead(404).end('Not found');
     return;
   }
-  try {
-    const st = await stat(file);
-    if (!st.isFile()) throw new Error('not a file');
-    const ext = extname(file);
-    const headers = { 'content-type': TYPES[ext] ?? 'application/octet-stream', 'cache-control': 'no-cache' };
-    if (ext === '.ts') {
-      // The browser cannot read TypeScript; Node strips the types on the way out.
-      const code = stripTypeScriptTypes(await readFile(file, 'utf8'), { mode: 'strip' });
-      res.writeHead(200, headers).end(code);
-      return;
-    }
-    res.writeHead(200, headers);
-    createReadStream(file).pipe(res);
-  } catch {
-    res.writeHead(404).end('Not found');
-  }
+  await files.send(req, res, file);
 });
 
 // POST /notes is the first door that reads a body from anyone: a body that dribbles in is cut off
