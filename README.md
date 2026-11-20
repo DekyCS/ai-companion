@@ -40,18 +40,29 @@ The `Dockerfile` runs `src/live.ts --model --clock real --rate 24 --persist data
 catches up on the hours missed. A save from before 2026-11-18, when Khina was a hedgehog, is brought
 over once on load (`src/migrate.ts`: dried beetles become clover, hedgehog-only memories and diary lines are let go; the file as it was is kept next to it as `<save>.hedgehog.json`). Redeploy with `railway up --detach`; logs with `railway logs`.
 
+The save and the spend ledger are written whole or not at all (a copy first, then renamed over the old
+file), so a crash mid-write can't tear them. About once a real hour, before the save is replaced, it is
+copied to `data/khina-state.json.bak`. On start, a save that can't be read is picked up from that backup
+(the broken file is kept as `.unreadable` to look at). If a save is there but neither copy can be read,
+the server stops with exit 1 and says so, rather than start a new life over hers: mend or restore the
+file, or move both away to start over on purpose. It also stops on a save from a newer build, whatever
+the backup holds, so rolling back never writes over it. The image pins Node 25.9.0 (`node:25.9.0-slim`, the
+same image `node:25-slim` was), so a redeploy never changes Node unseen. Node 25 has been past its end of
+life since June 2026; moving to Node 24 or 26 (LTS) is a decision still to make.
+
 ## Beyond the fixed village life (live server)
 
 On `npm run live`, Khina can also:
-- do anything of her own: Claude may propose an idea that is not on the menu, with where and what kind of thing it is; Khina's needs still weigh it;
+- do anything of her own: Claude may propose an idea that is not on the menu, with where and what kind of thing it is; Khina's needs still weigh it (an idea to draw or write becomes a real piece, and ideas about the computer are left to the computer's own actions);
 - make real pieces: pictures (SVG), poems, short stories, songs (a tune the page plays) and little games, kept in `<save folder>/pieces/` and shown in the Gallery;
-- look things up at the internet hut: a real web search, read-only; what Khina found shows under Internet and turns into memories.
+- look things up at the internet hut: a real web search, read-only; what Khina found shows under Internet and turns into memories. A question close to one she already asked (most of the same content words, and nothing new on one side) is remembered, not searched and paid for again; a new question on the same subject (frogs croaking in the rain after frogs croaking at night) is still looked up.
 
 - post a few short notes a day at the internet hut (`KHINA_POSTS_PER_DAY`, default 3), shown under Internet → posts;
 - read the notes visitors leave her on the site, and now and then write back (see Visitor notes below).
 
 These need `--model`. Pieces and lookups stay within `KHINA_EXTRAS_CAP_USD` (default $0.30 a day, $0.50 on the live server; inside the daily cap),
-let out evenly through the day so a fast clock can't spend it all after midnight. `/spend` shows what Claude has cost per job.
+let out evenly through the day so a fast clock can't spend it all after midnight. `/spend` shows what Claude has cost per job,
+why Claude can't be asked right now (`unavailable`, null when it can) and the last 10 failed calls (`recentFailures`: time, job, why).
 
 ### Giving Khina an account
 
@@ -166,7 +177,7 @@ npm run day -- --offline          # one day on code alone, free
 npm run day                       # one day with Claude choosing and writing (needs a key)
 npm run long -- --compare         # 40 days × 3 seeds, phase 2 off vs on, repetition measures (free)
 npm run copies -- --compare       # 5 identical copies × 40 days: do they become individuals? (free)
-npm test                          # 133 tests
+npm test                          # 185 tests
 npm run check                     # type-check the sim and the page
 ```
 
@@ -175,7 +186,9 @@ npm run check                     # type-check the sim and the page
 `claude` (code picks vs Claude picks, and Claude seeing feelings as words vs numbers; needs a key).
 Other flags: `--days`, `--seeds 1,2,3`, `--sticky` (a stand-in model stuck on its favourites),
 `--model` (Claude for every condition), `--night code` (no Opus night page; cheaper) and `--max-spend`.
-It writes `runs/long-<time>-<exp>-<days>d/summary.md` with the measures next to the paper's baselines.
+It writes `runs/long-<time>-<exp>-<days>d/summary.md` with the measures next to the paper's baselines,
+then what she did (every action's count, all seeds together, and the pastimes she never chose) and her
+needs while awake (10th percentile, median, share of waking hours below 55).
 
 `npm run copies` takes `--copies 5`, `--days 40`, `--personalities 1,2,3`, `--compare` (tastes off as control), `--habits` (Claude without vs with habit words), `--vs <switch>` (any switch in `Features` off vs on, e.g. `codeFavourite`),
 `--model`, `--night` and `--max-spend`, and writes `runs/copies-<time>/summary.md`.
@@ -206,6 +219,11 @@ Each run writes `runs/<time>-seed<n>-<offline|model>/`:
 `.env` is ignored by git. A simulated day cost about $0.023 in testing: about 47 Haiku 5.5 calls
 plus one Opus 5.5 night page ($0.014 to $0.018).
 Spending stops at `KHINA_DAILY_CAP_USD` per calendar day (default $1, tracked in `data/spend.json`)
-and at `--max-spend` per run. When the money runs out or the API fails, Khina keeps living on code alone.
+and at `--max-spend` per run. When the money runs out or the API fails, Khina keeps living on code alone,
+and Claude comes back by itself: after 5 failed calls in a row it rests 5 minutes, then twice as long
+each time it fails again (10, 20, 40), at most an hour; out of credits or at the workspace spend limit, it
+rests 5 minutes at once and tries again. Only a rejected key (or a model the key may not use) keeps
+Claude off until the next deploy. Each failed call is one line in the log, the reason only, never a key
+or the prompt: `✗ decide failed: rate limited`.
 
 The full design and the reasons behind it are in `PLAN.md`.

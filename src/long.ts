@@ -6,8 +6,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { ALL_OFF, ALL_ON, budget, type Features } from './config.ts';
-import { measure, type LongMetrics } from './metrics.ts';
+import { ALL_OFF, ALL_ON, budget, NEEDS, type Features } from './config.ts';
+import { measure, PASTIMES, type LongMetrics } from './metrics.ts';
 import { makeMind, type MindKind } from './minds.ts';
 import { writeReport } from './report.ts';
 import { Rng } from './rng.ts';
@@ -186,8 +186,39 @@ const lines = [
   `| --- | --- | ${COLS.map(() => '---').join(' | ')} |`,
   ...rows.map((r) => `| ${r.cond} | ${r.seed} | ${COLS.map(([, f, as]) => as(f(r))).join(' | ')} |`),
 ];
+
+/** What she did, all seeds together, and what she never chose (over 48 live days, 9 pastimes never were). */
+function actionLines(): string[] {
+  const out = ['What she did, all seeds together:', ''];
+  for (const c of names) {
+    const counts: Record<string, number> = {};
+    for (const r of rows.filter((x) => x.cond === c)) for (const [id, n] of Object.entries(r.m.actions)) counts[id] = (counts[id] ?? 0) + n;
+    const done = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([id, n]) => `${id} ${n}`);
+    const never = PASTIMES.filter((id) => !counts[id]);
+    out.push(`- ${c}: ${done.join(', ')}`, `  never chosen: ${never.length ? never.join(', ') : 'none'} (of ${PASTIMES.length} pastimes)`);
+  }
+  return out;
+}
+
+/** Needs over her waking hours, averaged over seeds: do they dip, and how far. */
+function needLines(): string[] {
+  const cell = (c: string, n: string) => {
+    const f = (k: 'p10' | 'median' | 'below55') => mean(c, (r) => r.m.needs[n]?.[k] ?? 0);
+    return `${f('p10').toFixed(0)} / ${f('median').toFixed(0)} / ${pct(f('below55'))}`;
+  };
+  return [
+    'Needs while awake (10th percentile / median / waking hours below 55):',
+    '',
+    `| need | ${names.join(' | ')} |`,
+    `| --- | ${names.map(() => '---').join(' | ')} |`,
+    ...NEEDS.map((n) => `| ${n} | ${names.map((c) => cell(c, n)).join(' | ')} |`),
+  ];
+}
+
+const extra = [...actionLines(), '', ...needLines()];
+lines.push('', ...extra);
 const cost = rows.reduce((a, r) => a + r.cost, 0);
 if (cost > 0) lines.push('', `Model cost: $${cost.toFixed(4)}`);
 const path = join(outDir, 'summary.md');
 writeFileSync(path, `${lines.join('\n')}\n`);
-console.log(`\n${lines.slice(0, 4 + COLS.length).join('\n')}${cost > 0 ? `\n\nModel cost: $${cost.toFixed(4)}` : ''}\n\nSummary: ${path}`);
+console.log(`\n${lines.slice(0, 4 + COLS.length).join('\n')}\n\n${extra.join('\n')}${cost > 0 ? `\n\nModel cost: $${cost.toFixed(4)}` : ''}\n\nSummary: ${path}`);

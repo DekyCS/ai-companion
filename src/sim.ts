@@ -11,13 +11,13 @@ import { nightly } from './mind/sleep.ts';
 import { maybeDrama } from './world/drama.ts';
 import { decide, SENSES, type Decision, type Mind } from './mind/decide.ts';
 import { fromHedgehogDays, onMind, STALE_NOTE, templateDiary } from './mind/prompts.ts';
-import { formFor, pieceRequest } from './mind/making.ts';
+import { FORM_NOUN, formFor, knownReading, pieceRequest } from './mind/making.ts';
 import { checkNotes, finishReading, nudgeFor, releaseNotes, sittingFailed, takeBatch } from './notes.ts';
 import type { PieceStore } from './pieces.ts';
 import { Rng as Seeded, type Rng } from './rng.ts';
 import { HISTORY_KEEP, unreadNotes, type Activity, type Completed, type FoodId, type State, type WorkResult } from './state.ts';
 import { clock, dayOf, hourOf, minuteOfDay, stamp } from './time.ts';
-import { actionDef, type ActionDef, type Ctx } from './world/actions.ts';
+import { actionDef, MEDIA, type ActionDef, type Ctx } from './world/actions.ts';
 import { PLACES, travelMinutes } from './world/places.ts';
 import { isWet, newLetter, nextWeather, presentAt, updatePresence } from './world/village.ts';
 
@@ -301,8 +301,8 @@ export class Sim {
     const store = this.pieces;
     if (!def.work || !store) return;
     const s = this.s;
-    // Asking the same thing twice: Khina remembers the answer, and no search is paid for.
-    const before = def.work === 'web' ? s.readings.findLast((r) => sameQuestion(r.question, act.detail)) : undefined;
+    // Asking the same thing again, in any words: Khina remembers the answer, and no search is paid for.
+    const before = def.work === 'web' ? knownReading(s.readings, act.detail) : undefined;
     if (before) {
       this.jobs.set(act.decisionId, Promise.resolve({ kind: 'web', reading: before, again: true }));
       return;
@@ -312,8 +312,13 @@ export class Sim {
       // The latest thing she made as a bunny (a hedgehog-era piece is not hers to post about now).
       const latest = s.pieces.findLast((p) => !fromHedgehogDays(s, p.t, p.title));
       const hoursAgo = latest ? (s.t - latest.t) / 60 : null;
-      // Not her lines about visitors' notes: a stranger's note must not find its way into a public post.
-      const recent = this.log.filter((r) => r.diary && r.actionId !== 'notes').slice(-5).map((r) => r.diary as string);
+      // The village's records of her last few actions, not her diary lines: a diary line may add a detail
+      // the records don't have, and a post must not (4 of her first 9 did). Never visitors' notes either:
+      // a stranger's note must not find its way into a public post.
+      const recent = this.log
+        .filter((r) => r.kind === 'done' && r.actionId !== 'notes' && r.actionId !== 'idle')
+        .slice(-5)
+        .map((r) => r.outcome.replace(STALE_NOTE, ''));
       const job = m.writePost(s, act.detail, recent, latest, hoursAgo).then((p): WorkResult =>
         typeof p === 'string'
           ? { kind: 'none', why: p }
@@ -335,13 +340,17 @@ export class Sim {
       return;
     }
     if (!m.canWork?.()) return;
-    const mindLine = onMind(s, 1, false)[0] ?? '';
+    // Not "asked that again" or "worn out": they would point a piece or a lookup back at the worn topic.
+    const mindLine = onMind(s, 1, false, ['asked-again', 'worn-out'])[0] ?? '';
     let job: Promise<WorkResult> | null = null;
     if (def.work === 'piece' && m.makePiece) {
       const draw = def.id === 'draw';
-      const form = draw ? 'picture' : formFor(act.detail, this.workRng);
-      const req = pieceRequest(s, form, act.detail, draw ? 'charcoal on a strip of bark' : '', this.workRng, mindLine);
-      job = m.makePiece(s, req).then((d) => (typeof d === 'string' ? { kind: 'none', why: d } : { kind: 'piece', piece: store.save(d, s.t) }));
+      // A form she has made 3 of her last 5 times gives way to the one she has gone longest without.
+      const form = draw ? 'picture' : formFor(act.detail, this.workRng, s.pieces);
+      const req = pieceRequest(s, form, act.detail, draw ? (act.medium ?? MEDIA[0]!.name) : '', this.workRng, mindLine);
+      // Said where she is making it (the site and the diary), so nobody reads "a picture of the oak" next to a poem.
+      if (req.meant) act.detail = `${act.detail} (as ${FORM_NOUN[form]} this time)`;
+      job = m.makePiece(s, req).then((d) => (typeof d === 'string' ? { kind: 'none', why: d } : { kind: 'piece', piece: store.save(d, s.t, draw ? 'draw' : 'make') }));
     }
     if (def.work === 'web' && m.browse) {
       job = m.browse(s, act.detail, mindLine).then((r) => (typeof r === 'string' ? { kind: 'none', why: r } : { kind: 'web', reading: r }));
@@ -365,6 +374,8 @@ export class Sim {
       this.event({ type: 'piece', piece: r.piece });
       this.onLine(`${' '.repeat(10)}✎ made ${r.piece.form === 'toy' ? 'a little game' : `a ${r.piece.form}`}: "${r.piece.title}"`);
     } else if (r.kind === 'web' && r.again) {
+      // When she asked again, so a question she keeps coming back to can wear out (browse in actions.ts).
+      r.reading.again = [...(r.reading.again ?? []), s.t].slice(-5);
       this.onLine(`${' '.repeat(10)}⌕ asked again "${r.reading.question}" (remembered, no search)`);
     } else if (r.kind === 'web') {
       s.readings.push(r.reading);
@@ -497,10 +508,4 @@ function pad(s: string, n: number): string {
 /** How much the needs are pulling mood down (or up) right now. */
 function needMood(s: State): number {
   return needThoughts(s).reduce((a, t) => a + t.value, 0);
-}
-
-/** The same question in other punctuation or case. */
-export function sameQuestion(a: string, b: string): boolean {
-  const norm = (q: string) => q.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
-  return norm(a) !== '' && norm(a) === norm(b);
 }

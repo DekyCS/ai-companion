@@ -7,7 +7,8 @@
 // --clock real paces Khina's clock by the real one: --rate 1 (default) is real time on the
 // local wall clock (set TZ), so night is night; --rate 24 lives a Khina day every real hour.
 // Khina still sleeps at Khina's night either way. --persist saves Khina's life every few minutes and on shutdown, and picks it up on
-// start, catching up on the time missed. Hosting (Railway) sets PORT; then it listens on all
+// start, catching up on the time missed; an hourly <save>.bak stands in for a save that can't be read,
+// and with neither readable the server stops rather than start over (src/save.ts). Hosting (Railway) sets PORT; then it listens on all
 // interfaces. See Dockerfile.
 // Khina's asks to the Keeper are in the snapshot for anyone to read; POST /asks/<id> answers one,
 // only with the header x-keeper-key equal to KHINA_KEEPER_KEY (at least 24 characters; src/asks.ts).
@@ -17,7 +18,7 @@
 // are private: GET /notes/inbox, POST /notes/inbox/clear?upto=<ms>, POST /notes/<id>/hide and
 // POST /notes/<id>/show need the Keeper's key, like answering asks.
 
-import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { copyFileSync, createReadStream, existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { dirname, join, normalize, sep } from 'node:path';
@@ -25,13 +26,15 @@ import { parseArgs } from 'node:util';
 import { budget } from './config.ts';
 import { fromHedgehogDays, migrateSave } from './migrate.ts';
 import { makeMind } from './minds.ts';
+import { ClaudeMind } from './mind/claude.ts';
 import { Rng } from './rng.ts';
+import { loadSave, writeSave, type Saved } from './save.ts';
 import { Sim } from './sim.ts';
 import { createStaticFiles } from './static.ts';
 import { PieceStore } from './pieces.ts';
 import { TOY_CSP } from './mind/making.ts';
 import { makeOutlets, sendEverywhere } from './outlets.ts';
-import { newState, type Ask, type Completed, type PieceRef, type Post, type Reading, type Reply, type State } from './state.ts';
+import { newState, type Ask, type PieceRef, type Post, type Reading, type Reply } from './state.ts';
 import { ASK, answerRequest, asksForSite, checkRequest, keeperGate, newGuard, serverKey } from './asks.ts';
 import { clearRequest, clientIp, hideRequest, inboxRequest, mineRequest, newNoteGate, NOTE, notesSnapshot, replyForSite, sendRequest, showRequest } from './notes.ts';
 import { clock, dayOf, isDark, partOfDay, weekday } from './time.ts';
@@ -71,24 +74,36 @@ const outDir = join('runs', `live-${stampNow}-seed${seed}-${kind}`);
 const mind = makeMind(kind, { seed, runDir: outDir, capUsd: Number(values['max-spend']) || budget.runUsd });
 
 // ---------- Khina's life, new or picked up from the last save ----------
-interface Saved {
-  version: 1;
-  seed: number;
-  /** Real time (ms) at game minute 0, when the clock follows the wall clock. */
-  epochMs: number | null;
-  /** Khina minutes per real minute when epochMs was set. */
-  rate?: number;
-  s: State;
-  rngState: number;
-  log: Completed[];
-}
+// The save, or its hourly backup when the save can't be read (src/save.ts). A save that is there but
+// unreadable, backup and all, stops the server: the volume still holds her life for a person to mend,
+// and starting a new one over it, as this did until 2026-11-20, would be the worst way to fail.
 let saved: Saved | null = null;
-if (persistPath && existsSync(persistPath)) {
-  try {
-    saved = JSON.parse(readFileSync(persistPath, 'utf8')) as Saved;
-    if (saved.version !== 1) saved = null;
-  } catch (err) {
-    console.log(`Could not read ${persistPath}, starting a new life: ${(err as Error).message}`);
+/** The file the save was read from: the save itself, or its backup. */
+let savedFrom: string | null = null;
+if (persistPath) {
+  const got = loadSave(persistPath);
+  if (got.from === 'unreadable') {
+    console.error(`Khina's save can't be read: ${got.why}.`);
+    console.error(`Not starting a new life over it. Mend or restore ${persistPath} (or move it and its .bak away to start a new life on purpose), then start again.`);
+    process.exit(1);
+  }
+  if (got.from === 'backup') {
+    // The broken file is kept to look at, since the next save replaces it.
+    const broken = `${persistPath}.unreadable`;
+    let kept = false;
+    try {
+      if (existsSync(persistPath)) {
+        copyFileSync(persistPath, broken);
+        kept = true;
+      }
+    } catch {
+      // Nothing to keep, or it can't be read at all: the backup is what matters.
+    }
+    console.log(`Could not read the save (${got.trouble}); picked up from the backup ${got.path} instead${kept ? `, the broken file is kept as ${broken}` : ''}.`);
+  }
+  if (got.from !== 'none') {
+    saved = got.saved;
+    savedFrom = got.path;
   }
 }
 /** Minutes since this week's Monday 00:00, local time (game minute 0 is a Monday midnight). */
@@ -98,9 +113,9 @@ function minutesIntoWeek(d: Date): number {
 const s = saved?.s ?? newState(seed);
 // Khina became a bunny on 2026-11-18; a save from her hedgehog days is brought over once, state and
 // diary log together. The file as it was is kept next to it, untouched, in case it is ever wanted back.
-if (saved && persistPath && migrateSave(saved)) {
+if (saved && persistPath && savedFrom && migrateSave(saved)) {
   const kept = `${persistPath}.hedgehog.json`;
-  if (!existsSync(kept)) copyFileSync(persistPath, kept);
+  if (!existsSync(kept)) copyFileSync(savedFrom, kept);
   console.log(`Brought ${persistPath} over from Khina's hedgehog days: she is a bunny now (the old save is kept in ${kept}).`);
 }
 if (!saved && realClock) {
@@ -157,13 +172,19 @@ function askWithClock(a: Ask) {
 }
 if (saved) sim.log.push(...saved.log);
 
+/**
+ * Whole or not at all, with the save as it stood copied to <save>.bak about once a real hour first
+ * (src/save.ts writeSave). A save that fails (a full disk, a lost volume) is logged and tried again at
+ * the next one: the last good save stays where it was, and the village keeps going.
+ */
 function save(): void {
   if (!persistPath) return;
   const data: Saved = { version: 1, seed, epochMs, rate, s: { ...s, rngState: rng.state }, rngState: rng.state, log: sim.log.slice(-80) };
-  mkdirSync(dirname(persistPath), { recursive: true });
-  const tmp = `${persistPath}.tmp`;
-  writeFileSync(tmp, JSON.stringify(data));
-  renameSync(tmp, persistPath);
+  try {
+    writeSave(persistPath, data);
+  } catch (err) {
+    console.log(`Could not save Khina's life (${(err as NodeJS.ErrnoException).code ?? 'error'}); the last save is kept, and saving tries again in a few minutes.`);
+  }
 }
 if (persistPath) {
   setInterval(save, 5 * 60_000).unref();
@@ -457,11 +478,25 @@ const server = createServer({ connectionsCheckingInterval: 5_000 }, async (req, 
     return;
   }
   if (url === '/spend') {
-    // What Claude has cost since this process started, per job: how the daily cap is being used.
+    // What Claude has cost since this process started, per job: how the daily cap is being used. Also
+    // why Claude can't be asked right now (null when it can) and the last 10 failed calls with their
+    // reasons, which until 2026-11-20 showed only as a count.
     const st = mind.stats();
     const hours = (Date.now() - startedAt) / 3_600_000;
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
-    res.end(JSON.stringify({ hours: +hours.toFixed(2), khinaDays: +((hours * rate) / 24).toFixed(2), usd: +st.costUsd.toFixed(4), calls: st.calls, failures: st.failures, byJob: st.byJob ?? {}, today: mind.budgetToday?.() ?? null }));
+    res.end(
+      JSON.stringify({
+        hours: +hours.toFixed(2),
+        khinaDays: +((hours * rate) / 24).toFixed(2),
+        usd: +st.costUsd.toFixed(4),
+        calls: st.calls,
+        failures: st.failures,
+        unavailable: mind.unavailable(),
+        recentFailures: mind instanceof ClaudeMind ? mind.recentFailures() : [],
+        byJob: st.byJob ?? {},
+        today: mind.budgetToday?.() ?? null,
+      }),
+    );
     return;
   }
   if (url.startsWith('/asks/')) {

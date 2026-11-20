@@ -3,9 +3,11 @@
 // the thing, and code checks every piece before anyone sees it: pieces are shown on a public page.
 
 import type { Rng } from '../rng.ts';
-import type { PieceForm, PieceRef, Reading, State } from '../state.ts';
+import { PIECE_FORMS, type PieceForm, type PieceRef, type Reading, type State } from '../state.ts';
+import { MEDIA } from '../world/actions.ts';
 import { moodWord } from '../body.ts';
 import { BUNNY_RULE, characterSheet, fromHedgehogDays, HEDGEHOG_SELF } from './prompts.ts';
+import { contentWords } from './questions.ts';
 
 /** What the model hands back for a piece, before it is checked and stored. */
 export interface PieceDraft {
@@ -26,15 +28,19 @@ export interface PieceDraft {
 export interface PieceRequest {
   form: PieceForm;
   about: string;
-  /** "charcoal on bark" for the shed's drawing action; free otherwise. */
+  /** What the shed's drawing action draws with ("charcoal on a strip of bark"); free otherwise. */
   medium: string;
   constraint: string;
   onMind: string;
   mood: string;
   avoid: string[];
+  /** Her last few subjects, when this one is close to one of them: she picks something else. */
+  sameSubject?: string[];
+  /** The form her words asked for, when code turned it into another one for variety. */
+  meant?: PieceForm;
 }
 
-const FORM_WORDS: [PieceForm, RegExp][] = [
+export const FORM_WORDS: [PieceForm, RegExp][] = [
   ['song', /\b(song|tune|melody|lullaby|hum|ditty|jingle|music)\b/i],
   ['toy', /\b(game|toy|puzzle|gadget|maze)\b/i],
   ['story', /\b(story|tale|fable|account)\b/i],
@@ -42,19 +48,50 @@ const FORM_WORDS: [PieceForm, RegExp][] = [
   ['picture', /\b(picture|drawing|draw|painting|paint|sketch|portrait|map|doodle|pattern)\b/i],
 ];
 
-/** The form Khina's words ask for, or one picked by code. */
-export function formFor(about: string, rng: Rng): PieceForm {
+/** The form her words name, if they name one. */
+export function namedForm(about: string): PieceForm | null {
   for (const [form, re] of FORM_WORDS) if (re.test(about)) return form;
-  return rng.weighted(
-    [
-      { f: 'picture' as const, w: 3 },
-      { f: 'poem' as const, w: 2.5 },
-      { f: 'song' as const, w: 2 },
-      { f: 'story' as const, w: 1.5 },
-      { f: 'toy' as const, w: 1 },
-    ],
-    (x) => x.w,
-  ).f;
+  return null;
+}
+
+/** A form she has made 3 or more times in her last 5 pieces is set aside for now. */
+const FORM_RUT = { last: 5, atMost: 2 };
+
+/**
+ * Made with "make", not drawn at the workbench. The workbench draws a picture every time, by design, so
+ * counting its pictures would turn nearly every "make" that names a picture into something else (her last
+ * 5 live pieces were all workbench pictures). Pieces from before pieces were tagged: one whose words name
+ * no form ("the wet oak roots") was a workbench drawing.
+ */
+const fromMake = (p: Pick<PieceRef, 'about' | 'by'>) => (p.by ? p.by === 'make' : namedForm(p.about ?? '') !== null);
+
+/**
+ * The form Khina's words ask for, or one picked by code. If that form is 3 or more of her last 5 pieces
+ * made with "make", she makes the form she has gone longest without instead (21 of her first 22 pictures
+ * were charcoal).
+ */
+export function formFor(about: string, rng: Rng, pieces: Pick<PieceRef, 'form' | 'about' | 'by'>[] = []): PieceForm {
+  const wanted =
+    namedForm(about) ??
+    rng.weighted(
+      [
+        { f: 'picture' as const, w: 3 },
+        { f: 'poem' as const, w: 2.5 },
+        { f: 'song' as const, w: 2 },
+        { f: 'story' as const, w: 1.5 },
+        { f: 'toy' as const, w: 1 },
+      ],
+      (x) => x.w,
+    ).f;
+  const recent = pieces.filter(fromMake).slice(-FORM_RUT.last);
+  if (recent.filter((p) => p.form === wanted).length <= FORM_RUT.atMost) return wanted;
+  return leastRecentForm(pieces);
+}
+
+/** The form she has gone longest without: one never made first, in PIECE_FORMS order. */
+export function leastRecentForm(pieces: Pick<PieceRef, 'form'>[]): PieceForm {
+  const last = (f: PieceForm) => pieces.findLastIndex((p) => p.form === f);
+  return [...PIECE_FORMS].sort((a, b) => last(a) - last(b))[0] as PieceForm;
 }
 
 const CONSTRAINTS: Record<PieceForm, string[]> = {
@@ -75,6 +112,12 @@ const CHARCOAL_OK = new Set(['seen from very low down, at bunny height', 'mostly
 
 export function pieceRequest(s: State, form: PieceForm, about: string, medium: string, rng: Rng, onMind: string): PieceRequest {
   const pool = medium ? CONSTRAINTS.picture.filter((c) => CHARCOAL_OK.has(c)) : CONSTRAINTS[form];
+  const mine = (s.pieces ?? []).filter((p) => !fromHedgehogDays(s, p.t, p.title));
+  // Subjects came round again and again (trains 14 of her first 46 pieces): one close to a recent
+  // subject brings the last few into the prompt, so she picks something else.
+  const subjects = mine.map((p) => p.about).filter(Boolean).slice(-SUBJECTS.last);
+  const close = closeSubject(about, subjects);
+  const meant = namedForm(about);
   return {
     form,
     about,
@@ -82,9 +125,40 @@ export function pieceRequest(s: State, form: PieceForm, about: string, medium: s
     constraint: rng.pick(pool),
     onMind,
     mood: moodWord(s.mood),
-    avoid: (s.pieces ?? []).filter((p) => !fromHedgehogDays(s, p.t, p.title)).map((p) => p.title).slice(-8),
+    avoid: mine.map((p) => p.title).slice(-8),
+    ...(close ? { sameSubject: subjects } : {}),
+    ...(meant && meant !== form && !medium ? { meant } : {}),
   };
 }
+
+/** How far back her subjects count, and in how many of them one word makes it a worn subject. */
+const SUBJECTS = { last: 10, wornIn: 3 };
+
+/**
+ * Too close to her recent subjects: it shares at least 2 words with one of them (or every word, when it
+ * has only one: "the train" after "the express train skipping the halt"), or half its words, or it has a
+ * word that is in 3 of her last 10 subjects already. Counting 2 shared words alone missed most repeats:
+ * her subjects are short ("the train", "a poem about the oak"), and a one-word subject never shares 2.
+ */
+export function closeSubject(about: string, subjects: string[]): boolean {
+  const mine = subjectWords(about);
+  if (mine.size === 0) return false;
+  const others = subjects.map(subjectWords);
+  const near = others.some((x) => {
+    const shared = [...mine].filter((w) => x.has(w)).length;
+    const smaller = Math.min(mine.size, x.size);
+    return smaller > 0 && (shared >= Math.min(2, smaller) || shared / new Set([...mine, ...x]).size >= 0.5);
+  });
+  return near || [...mine].some((w) => others.filter((x) => x.has(w)).length >= SUBJECTS.wornIn);
+}
+
+/** Words of a subject, without the words for what it is made as or with ("a charcoal drawing of the oak on bark": oak). */
+function subjectWords(about: string): Set<string> {
+  const forms = /^(picture|drawing|draw|painting|paint|sketch|portrait|doodle|charcoal|chalk|ink|bark|slate|watercolour|watercolor|mosaic|pressed|poem|verse|song|tune|story|tale|game|toy|little|quick|small|short|tiny|make|made|again|one)$/;
+  return new Set([...contentWords(about)].filter((w) => !forms.test(w)));
+}
+
+export const FORM_NOUN: Record<PieceForm, string> = { picture: 'a picture', poem: 'a poem', story: 'a short story', song: 'a song', toy: 'a little game' };
 
 const FORM_ASK: Record<PieceForm, string> = {
   picture: `A picture as one standalone SVG: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">...</svg>. Drawn by paw: slightly wobbly paths, uneven fills, a small palette, a background that fills the frame. No <text>, no scripts, no links, no external images or fonts, no filters that reference other files. Under 20000 characters. Put it in "svg".`,
@@ -103,14 +177,19 @@ If Khina herself is in the piece, she is a small bunny with long ears, soft roun
 ${characterSheet(s)}`;
 
 export function makePrompt(r: PieceRequest): string {
+  const look = MEDIA.find((m) => m.name === r.medium)?.look;
   const lines = [
     `Khina wants to make: ${r.about}.`,
-    `Form: ${r.form}.${r.medium ? ` Medium: ${r.medium} (so: dark charcoal strokes and smudges on a bark-brown background, no other colours).` : ''}`,
+    `Form: ${r.form}.${r.medium ? ` Medium: ${r.medium}${look ? ` (so: ${look})` : ''}.` : ''}`,
     `A constraint Khina set herself: ${r.constraint}.`,
     `Khina's mood: ${r.mood}.`,
   ];
+  if (r.meant) lines.push(`She thought of ${FORM_NOUN[r.meant]}, but has made a lot of those lately, so this time it comes out as ${FORM_NOUN[r.form]}.`);
   if (r.onMind) lines.push(`On Khina's mind lately: ${r.onMind}`);
   if (r.avoid.length) lines.push(`Khina's earlier pieces (make something different from these): ${r.avoid.map((t) => `"${t}"`).join(', ')}.`);
+  if (r.sameSubject?.length) {
+    lines.push(`What her last pieces were about: ${r.sameSubject.map((t) => `"${t}"`).join(', ')}. This one is too close to one of them: pick a different subject from these, something else from her day or the village, and keep the form.`);
+  }
   lines.push('', FORM_ASK[r.form]);
   return lines.join('\n');
 }
@@ -266,6 +345,10 @@ export const WEB_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+// ---------- Asking the same thing again: src/mind/questions.ts ----------
+
+export { contentWords, knownReading, questionOverlap, sameQuestion } from './questions.ts';
+
 export function checkReading(json: unknown, asked: string, t: number): Reading | string {
   const j = (json ?? {}) as Record<string, unknown>;
   const learned = cleanText(j.learned, 300).replace(/\s+/g, ' ');
@@ -286,7 +369,7 @@ Reply with JSON:
 - sharePiece: true if the post is about the latest thing Khina made (it will be linked), else false.
 
 Rules:
-- Stick to what is in the facts you are given. Do not invent events.
+- Only use details from these facts: what she wants to post about, the latest thing she made, and the village's records of what she did lately. Do not add places, objects, weather, people, sounds or events that are not in them.
 - No links, no @names, no hashtags, no emojis, no exclamation marks.
 - Never ask anyone for anything: no follows, likes, money, crypto, tokens or buying. Never sell or promote.
 - Nothing about real people, news or politics. Gentle and kind. Never use the words cozy, cosy, adventure, journey, magical, delightful or whimsical.
@@ -294,11 +377,15 @@ Rules:
 
 ${characterSheet(s)}`;
 
-export function postPrompt(about: string, recentLines: string[], latest: PieceRef | undefined, hoursAgo: number | null): string {
+/**
+ * `recentFacts` are the village's own records of her last few actions (code's outcomes), not her diary
+ * lines: 4 of her first 9 posts carried details a diary line had added and the records did not have.
+ */
+export function postPrompt(about: string, recentFacts: string[], latest: PieceRef | undefined, hoursAgo: number | null): string {
   return [
     `Khina wants to post about: ${about}`,
     latest && hoursAgo !== null ? `The latest thing Khina made: "${latest.title}" (${latest.form === 'toy' ? 'a little game' : `a ${latest.form}`}), ${hoursAgo < 1 ? 'just now' : `${Math.round(hoursAgo)} hours ago`}${latest.about ? `, from the idea: ${latest.about}` : ''}.` : '',
-    recentLines.length ? `Khina's diary lately:\n${recentLines.map((l) => `- ${l}`).join('\n')}` : '',
+    recentFacts.length ? `What Khina did lately, from the village's records (the only facts to use):\n${recentFacts.map((l) => `- Khina ${l}`).join('\n')}` : '',
     'Write the post as JSON.',
   ]
     .filter(Boolean)

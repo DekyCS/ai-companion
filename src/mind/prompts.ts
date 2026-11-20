@@ -4,11 +4,11 @@
 import { energyWord, moodWord, needThoughts, pressingWords } from '../body.ts';
 import type { Rng } from '../rng.ts';
 import type { Completed, State } from '../state.ts';
-import { ago, clock, partOfDay, weekday } from '../time.ts';
+import { ago, clock, partOfDay, timeWords, weekday } from '../time.ts';
 import { actionDef, ACTION_IDS, OWN_KINDS } from '../world/actions.ts';
 import { PLACE_IDS, PLACES } from '../world/places.ts';
 import { isWet, names, presentAt, verb, WEATHER_WORDS } from '../world/village.ts';
-import { habit, NEEDS, type NeedId } from '../config.ts';
+import { asking, habit, NEEDS, type NeedId } from '../config.ts';
 import type { Sense } from './decide.ts';
 import { habitNote, ownHabits } from './habit.ts';
 import { recall } from './memory.ts';
@@ -101,7 +101,7 @@ How to choose:
 - Fit the moment: the weather, the hour, who is around, what Khina has just been doing.
 - Make the picks genuinely different from each other, not five versions of one idea.
 ${s?.world.can?.own ? `- Khina is free to do anything a small bunny could do in this village, not only what is listed. If Khina would rather do something not on the list, pick "own" and say what. Ideas of Khina's own are welcome, as long as they fit this village and a bunny's paws. To look something up, use "browse" (when it is listed), never "own". ${BUNNY_RULE}
-` : ''}${s?.features.habitWords ? "- Khina has a few habits. Options marked as one of Khina's habits are things this particular bunny keeps coming back to; lean toward them when nothing pressing says otherwise. Options Khina hardly ever does are less likely, though not impossible.\n" : ''}
+` : ''}${s?.features.habitWords ? "- Khina has a few habits. Options marked as one of Khina's habits are things this particular bunny keeps coming back to; lean toward them when nothing pressing says otherwise. An option she has not done in a long while is a chance to do something different now and then.\n" : ''}
 For each pick:
 - action: its id from the list.
 - reason: what goes through Khina's head right now. First person, under 15 words, plain words. Not a description of the option.
@@ -123,6 +123,8 @@ Rules:
 - Do not say how many minutes something took.
 - Plain, short words. No exclamation marks, no emojis. Never use the words cozy, cosy, adventure, journey, magical, delightful or whimsical.
 - No lessons, no morals, no hopes about tomorrow.
+- Never write clock times (like 07:04); say the part of the day if it matters. A train's time is the one exception.
+- Name places shortly: the shed, the burrow, the stream.
 - Start differently from the recent lines you are shown, and do not reuse their phrases. Never write "did less for me than it used to".
 
 ${characterSheet(s)}`;
@@ -175,12 +177,14 @@ function sentence(text: string): string {
   return /[.!?"]$/.test(cap) ? cap : `${cap}.`;
 }
 
-/** What is on Khina's mind, worst or strongest first. */
-export function onMind(s: State, max = 4, withNeeds = true): string[] {
+/** What is on Khina's mind, worst or strongest first; `leaveOut` are thought keys not to say here. */
+export function onMind(s: State, max = 4, withNeeds = true, leaveOut: readonly string[] = []): string[] {
   const fromNeeds = needThoughts(s)
     .filter((th) => withNeeds && th.value < 0)
     .map((th) => ({ text: th.text, weight: Math.abs(th.value) + 100, at: th.at }));
-  const events = s.thoughts.map((th) => ({ text: `${th.text} (${ago(s.t, th.at)})`, weight: Math.abs(th.value), at: th.at }));
+  const events = s.thoughts
+    .filter((th) => !leaveOut.includes(th.key))
+    .map((th) => ({ text: `${th.text} (${ago(s.t, th.at)})`, weight: Math.abs(th.value), at: th.at }));
   return [...fromNeeds, ...events]
     .sort((a, b) => b.weight - a.weight || b.at - a.at)
     .slice(0, max)
@@ -221,11 +225,15 @@ export function lately(s: State, hours = 8): string {
   return groups.map((g) => sentence(`${g.part[0]!.toUpperCase()}${g.part.slice(1)}: ${g.bits.join(', then ')}`)).join(' ');
 }
 
+/** Said next to the one option on the menu for something she has not done in a long while (decide.ts). */
+export const TRY_NEW_NOTE = 'Khina has not done this in a long while and is half minded to try it again';
+
 function optionLine(o: Option, s: State, own: Set<string>): string {
-  const where = o.place === s.place ? 'right here' : `${PLACES[o.place].name}, ${o.travel} min hop`;
+  // Short place names: the full ones ("the little shed with the workbench") found their way into her diary.
+  const where = o.place === s.place ? 'right here' : `${PLACES[o.place].short}, ${o.travel} min hop`;
   const ask = o.def.detailAsk ? ` [say what: ${o.def.detailAsk}]` : '';
   if (o.def.id === 'own') return `- own: ${aboutHer(o.def.label)}${ask} (anywhere in the village)`;
-  const notes = [o.note, habitNote(s, o.def, own), o.familiarity >= habit.noteAt ? 'done a lot lately' : ''].filter(Boolean);
+  const notes = [o.note, o.tryNew ? TRY_NEW_NOTE : habitNote(s, o.def, own), o.familiarity >= habit.noteAt ? 'done a lot lately' : ''].filter(Boolean);
   return `- ${o.def.id}: ${aboutHer(o.def.label)}${ask} (${where}${notes.length ? `; ${notes.join('; ')}` : ''})`;
 }
 
@@ -262,8 +270,10 @@ export function decidePrompt(s: State, list: Option[], rng: Rng): string {
   const here = presentAt(s.world, s.place);
   const last = s.history[s.history.length - 1];
   const lines = [
+    // The clock stays here (the trains keep a timetable), but the place gets its short name: Claude's
+    // reason goes to the diary, and the long names ("the little shed with the workbench") came with it.
     `It is ${weekday(s.t)}, ${clock(s.t)} (${partOfDay(s.t)}). The weather is ${WEATHER_WORDS[s.world.weather]}.`,
-    `Khina is at ${PLACES[s.place].name}${here.length ? `. ${names(here)} ${verb(here, true)} here` : ''}.`,
+    `Khina is at ${PLACES[s.place].short}${s.place === 'burrow' ? ' (home)' : ''}${here.length ? `. ${names(here)} ${verb(here, true)} here` : ''}.`,
     '',
     ...feelingLines(s),
   ];
@@ -274,10 +284,13 @@ export function decidePrompt(s: State, list: Option[], rng: Rng): string {
   if (mems.length) lines.push('Comes to mind:', ...mems.map((m) => `- ${sentence(m.text)} (${m.where}, ${ago(s.t, m.t)})`));
   const tastes = tastesLine(s, rng);
   if (tastes) lines.push(tastes);
+  // Only what she made or looked up in the last day. Shown for days, one reading about trains skipping
+  // stops grew into 18% of her choices; older ones still come back through memory, now and then.
   // Kept from her hedgehog days, but not read back to the model as hers now.
-  const pieces = (s.pieces ?? []).filter((p) => !fromHedgehogDays(s, p.t, p.title)).slice(-3);
+  const fresh = (t: number) => t > s.t - asking.showForMin;
+  const pieces = (s.pieces ?? []).filter((p) => fresh(p.t) && !fromHedgehogDays(s, p.t, p.title)).slice(-3);
   if (pieces.length) lines.push(`Made lately: ${pieces.map((p) => `"${p.title}" (${p.form === 'toy' ? 'a little game' : `a ${p.form}`})`).join(', ')}.`);
-  const reads = (s.readings ?? []).filter((r) => !fromHedgehogDays(s, r.t, `${r.question} ${r.learned}`)).slice(-2);
+  const reads = (s.readings ?? []).filter((r) => fresh(r.t) && !fromHedgehogDays(s, r.t, `${r.question} ${r.learned}`)).slice(-2);
   if (reads.length) lines.push('Found out on the internet lately:', ...reads.map((r) => `- ${sentence(r.learned)}`));
   lines.push('', `Lately: ${lately(s)}`);
   if (last) lines.push(`Just finished: ${sentence(last.outcome)}`);
@@ -301,16 +314,22 @@ export function diaryPrompt(s: State, rec: Completed, recentLines: string[], sen
   const after = moodWord(rec.moodAfter);
   const lines = [
     // No weekday, and weather only when it is worth noticing: otherwise every line opens "Monday, clear."
-    `When: ${clock(rec.start)}${rec.end - rec.start >= 20 ? ` to ${clock(rec.end)}` : ''}.`,
-    `Where: ${PLACES[rec.place].name}.`,
+    // The part of the day, not the clock: given "07:04", a third of her lines opened "At 07:04 I…".
+    // Short place names, too: "the little shed with the workbench" was in 5% of them.
+    `When: ${timeWords(rec.start)}.`,
+    `Where: ${PLACES[rec.place].short}.`,
   ];
   const w = s.world.weather;
   if (isWet(w) || w === 'fog') lines.push(`Weather: ${WEATHER_WORDS[w]}.`);
   // Only a thwarted plan gets "meant to"; otherwise the model invents a contrast that did not happen.
   if (rec.kind === 'refused') lines.push(`What Khina set out to do: ${def.label}${rec.detail ? ` (${rec.detail})` : ''}.`);
+  // A train keeps its time (it is the timetable); anything else gets the part of the day instead. So does
+  // the reason, which the model wrote with the clock in front of it.
+  const train = rec.actionId === 'train';
+  const happened = train ? rec.outcome : clockToWords(rec.outcome);
   lines.push(
-    `What happened: ${sentence(rec.outcome.replace(STALE_NOTE, ''))}`,
-    `Why Khina chose it: ${rec.reason}`,
+    `What happened: ${sentence(happened.replace(STALE_NOTE, ''))}`,
+    `Why Khina chose it: ${train ? rec.reason : clockToWords(rec.reason)}`,
     `Mood (let it colour the wording, do not name it): ${after}${before !== after ? `, was ${before} before` : ''}.`,
     `Senses: ${SENSE_ASK[sense]}`,
   );
@@ -319,9 +338,17 @@ export function diaryPrompt(s: State, rec: Completed, recentLines: string[], sen
   if (rec.outcome.includes(STALE_NOTE) && Math.floor(rec.start) % 3 === 0) {
     lines.push('Also: Khina has done this a lot lately and it is wearing a little thin. Hint at that in your own fresh words, or leave it out.');
   }
-  if (recentLines.length) lines.push('', 'Recent diary lines (start differently from these):', ...recentLines.map((l) => `- ${l}`));
+  // Old lines carry clock times ("At 07:04 I…"), and shown as examples they bring the habit back: a line
+  // about a train keeps its time.
+  const shown = recentLines.map((l) => (/\btrains?\b/i.test(l) ? l : clockToWords(l)));
+  if (shown.length) lines.push('', 'Recent diary lines (start differently from these):', ...shown.map((l) => `- ${l}`));
   lines.push('', 'Write the diary line.');
   return lines.join('\n');
+}
+
+/** "slept from 21:40 to 06:55" becomes "slept from late evening to early morning". */
+export function clockToWords(text: string): string {
+  return text.replace(/\b([01]?\d|2[0-3]):([0-5]\d)\b/g, (_, h: string, m: string) => timeWords(Number(h) * 60 + Number(m)));
 }
 
 /** Added to an outcome when an overdone action gave less than it used to (the model reads it). */
@@ -331,7 +358,8 @@ const STALE_SAY = ['Not as much fun as it used to be.', "I've done that a lot la
 /** Diary line written by code when the model is off. */
 export function templateDiary(rec: Completed): string {
   const stale = rec.outcome.includes(STALE_NOTE);
-  const firstPerson = rec.outcome
+  // Part of the day, not the clock (a train keeps its time): these lines are shown to the model as examples.
+  const firstPerson = (rec.actionId === 'train' ? rec.outcome : clockToWords(rec.outcome))
     .replace(STALE_NOTE, '')
     .replace(/\bKhina's\b/g, 'my')
     .replace(/\bKhina has\b/g, 'I have')

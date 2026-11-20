@@ -21,8 +21,14 @@ export const body = {
   line: 35,
   /** Below this a need is critical. */
   critical: 12,
-  /** Points lost per game hour while awake. */
-  decayAwake: { fullness: 5, rest: 4, calm: 1.5, company: 4, novelty: 4.5, making: 3.5 } as Needs,
+  /**
+   * Points lost per game hour while awake. Calm and making were 1.5 and 3.5 until 2026-11-20: over 48 live
+   * days calm sat at 80 or more all of her waking time and making 98% of it, so no need was pressing in 94%
+   * of decisions and practice alone decided what she did. Making at 6 was too much: a model stuck on its
+   * favourites left her miserable on some seeds (stuck stand-in, seeds 7-16 × 50 days: days passing every
+   * check 86% before, 73% at 5 / 6, 93% at 5 / 4.5), and code alone sent her to bed hungry.
+   */
+  decayAwake: { fullness: 5, rest: 4, calm: 5, company: 4, novelty: 4.5, making: 4.5 } as Needs,
   /** Points lost per game hour while asleep. */
   decayAsleep: { fullness: 2, rest: 0, calm: 0, company: 1, novelty: 0.5, making: 0.5 } as Needs,
   /** Staying up at night tires Khina faster. */
@@ -158,14 +164,25 @@ export const taste = {
    * while top-3 share rose only 25.4% → 26.9%. At 2 and above it turns into a rut.
    */
   practiceGain: 1.5,
-  practiceMax: 8,
+  /**
+   * 8 until 2026-11-20. With needs mostly full, a pull of up to 8× (against 1× for anything never done)
+   * decided nearly every live choice, and 6 of 31 actions were never chosen in 48 days: an action never
+   * done never gains practice, so it never made the shortlist.
+   */
+  practiceMax: 3,
   /** Practice grows at most once a day per action, so it tracks days of interest rather than one busy afternoon. */
   practicePerDay: true,
   /**
    * Habit words for Claude: the few most-practised actions (at least `habitAt` days of practice)
-   * are "one of Khina's habits"; from day `rareFromDay`, actions under `rareBelow` are "hardly ever".
+   * are "one of Khina's habits"; from day `rareFromDay`, actions under `rareBelow` are "not done in a long
+   * while" (until 2026-11-20 "Khina hardly ever does this", which read as a reason not to).
    */
   habitWords: { top: 5, habitAt: 3, rareBelow: 0.5, rareFromDay: 4 },
+  /**
+   * One slot on every menu Claude sees goes to the possible action she has practised least, when it is not
+   * already there: the shortlist alone never offered an action that was never done (src/mind/decide.ts).
+   */
+  tryNewSlot: true,
   /** Practice halves in this many pet-days without use. */
   practiceHalfLifeDays: 20,
   /**
@@ -205,6 +222,26 @@ export const memoryCfg = {
   recallRestMin: 12 * 60,
   forgetBelow: 0.8,
   promotePerNight: 2,
+};
+
+/** The internet hut: when a question counts as one she already looked up, and when a topic is worn out. */
+export const asking = {
+  /**
+   * Share of content words two questions must have in common (stop-words out, plurals and -ing off, a
+   * few same-thing words: a halt is a stop), as well as 3 shared words or 2 with nothing new on one side
+   * (sameQuestion in src/mind/questions.ts). Exact repeats only, until 2026-11-20: 12 of 24 live lookups
+   * were "why do trains skip stops" again. Replayed on those 24 (test/making.test.ts), this catches 8 of
+   * the 15 that were paid for and every repeat the old check caught, and none of 28 different questions
+   * on the same subjects. On overlap alone, 0.4 took 14 of the 28 for repeats and 0.5 still took 5.
+   */
+  sameAt: 0.4,
+  /** Asked again this many times within this long, a question is worn out: it gives a thought that pushes away. */
+  wornTimes: 2,
+  wornWithinMin: 3 * 1440,
+  /** Her last this many questions are listed by the hut's computer on her menu, as already looked up. */
+  listed: 6,
+  /** What she made or looked up is in her decide prompt for this long only (it was there for days). */
+  showForMin: 1440,
 };
 
 /** If nothing notable has happened for a while, the village makes something happen. */

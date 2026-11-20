@@ -9,11 +9,12 @@ import Anthropic, {
   PermissionDeniedError,
   RateLimitError,
 } from '@anthropic-ai/sdk';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { budget, cacheReadFactor, cacheWriteFactor, effort, models, postsPerDay, prices, spendLedgerPath, webSearchUsd } from '../config.ts';
 import type { Rng } from '../rng.ts';
 import { NOTE, NOTES_SCHEMA, notesPrompt, notesSystem, redactNotes, type NotesAnswer } from '../notes.ts';
+import { writeFileAtomic } from '../save.ts';
 import type { Completed, Note, PieceRef, Reading, State } from '../state.ts';
 import { stamp } from '../time.ts';
 import type { Candidate, Mind, MindStats, Proposal, Sense } from './decide.ts';
@@ -69,7 +70,8 @@ export function notesOpen(spentUsd: number, reads: number, capUsd: number, now: 
 /**
  * Shared by every run, including runs going on side by side, so it re-reads the file on every
  * check and every addition. Keeping a copy in memory let parallel runs overwrite each other's
- * spend and slip past the daily cap.
+ * spend and slip past the daily cap. Every write is whole or not at all (writeFileAtomic): a crash
+ * mid-write used to leave half a file, which reads as empty, so today's spend began again at $0.
  */
 export class SpendLedger {
   private readonly path: string;
@@ -104,8 +106,7 @@ export class SpendLedger {
     const data = this.load();
     const k = `${today()} ${name}`;
     data[k] = (data[k] ?? 0) + 1;
-    mkdirSync(dirname(this.path), { recursive: true });
-    writeFileSync(this.path, JSON.stringify(data, null, 2));
+    writeFileAtomic(this.path, JSON.stringify(data, null, 2));
   }
 
   /** Adds to today's spend, and to one pot inside it ("<date> extras" or "<date> notes"). */
@@ -114,8 +115,7 @@ export class SpendLedger {
     const k = today();
     data[k] = (data[k] ?? 0) + usd;
     if (pot) data[`${k} ${pot}`] = (data[`${k} ${pot}`] ?? 0) + usd;
-    mkdirSync(dirname(this.path), { recursive: true });
-    writeFileSync(this.path, JSON.stringify(data, null, 2));
+    writeFileAtomic(this.path, JSON.stringify(data, null, 2));
   }
 }
 
@@ -145,6 +145,33 @@ function classify(err: unknown): Trouble {
   return { kind: 'other', why: err instanceof Error ? err.message.slice(0, 160) : String(err) };
 }
 
+/** Failures in a row before Claude rests; out of money, it rests at once. */
+export const FAILS_BEFORE_REST = 5;
+
+/**
+ * How long Claude rests after the n-th failure in a row: 5 minutes, then twice as long each time it
+ * fails again (10, 20, 40), at most an hour. Until 2026-11-20, 5 failures in a row or an empty purse
+ * switched Claude off until the next redeploy, though such trouble is usually over within the hour.
+ */
+export function backoffMs(n: number): number {
+  return Math.min(3_600_000, 300_000 * 2 ** Math.max(0, n - FAILS_BEFORE_REST));
+}
+
+/** A failed call as /spend shows it: when (real time), which job, and why. */
+export interface FailureNote {
+  at: string;
+  job: string;
+  why: string;
+}
+
+/** Anything shaped like an API key is cut out of a reason before it is logged or shown. */
+const scrub = (why: string) => why.replace(/sk-ant-[\w-]+/g, 'sk-ant-…');
+
+/** The one API method Khina's mind uses; tests hand in a stand-in, so they never reach the API. */
+export interface MessagesApi {
+  messages: { create(body: Anthropic.Messages.MessageCreateParamsNonStreaming): Promise<Anthropic.Messages.Message> };
+}
+
 export interface ClaudeMindOptions {
   outDir: string;
   runCapUsd?: number;
@@ -152,11 +179,16 @@ export interface ClaudeMindOptions {
   extrasCapUsd?: number;
   notesCapUsd?: number;
   ledgerPath?: string;
+  /** The API client; by default the real one. */
+  client?: MessagesApi;
+  /** Where a failed call's one line goes; by default the console (the server log). */
+  onLine?: (line: string) => void;
 }
 
 export class ClaudeMind implements Mind {
   readonly kind = 'model' as const;
-  private client = new Anthropic({ maxRetries: 2, timeout: 60_000 });
+  private client: MessagesApi;
+  private onLine: (line: string) => void;
   private ledger: SpendLedger;
   private runCap: number;
   private dailyCap: number;
@@ -167,9 +199,13 @@ export class ClaudeMind implements Mind {
   private pausedUntil = 0;
   private pausedWhy = '';
   private consecutiveFailures = 0;
+  /** The last 10 failed calls, newest last. */
+  private lastFailures: FailureNote[] = [];
   private s: MindStats = { calls: 0, failures: 0, costUsd: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 };
 
   constructor(o: ClaudeMindOptions) {
+    this.client = o.client ?? new Anthropic({ maxRetries: 2, timeout: 60_000 });
+    this.onLine = o.onLine ?? ((line) => console.log(line));
     this.outDir = o.outDir;
     this.runCap = o.runCapUsd ?? budget.runUsd;
     this.dailyCap = o.dailyCapUsd ?? budget.dailyUsd;
@@ -189,6 +225,11 @@ export class ClaudeMind implements Mind {
 
   stats(): MindStats {
     return { ...this.s, byJob: structuredClone(this.s.byJob ?? {}) };
+  }
+
+  /** The last 10 failed calls (real time, job, why), for the live server's /spend. */
+  recentFailures(): FailureNote[] {
+    return this.lastFailures.map((f) => ({ ...f }));
   }
 
   /**
@@ -387,10 +428,11 @@ export class ClaudeMind implements Mind {
       return { ok: true, json };
     } catch (err) {
       const t = classify(err);
-      if (t.kind === 'disable' || t.kind === 'no-money') this.disabled = t.why;
+      // A rejected key, or a model the key may not use, won't mend by waiting: off until the next deploy.
+      if (t.kind === 'disable') this.disabled = scrub(t.why);
       if (t.kind === 'busy') this.pause(60_000, t.why);
       if (t.kind === 'offline') this.pause(20_000, t.why);
-      return this.fail({ ...log, ms: Date.now() - started, error: t }, t.why);
+      return this.fail({ ...log, ms: Date.now() - started, error: { ...t, why: scrub(t.why) } }, t.why, t.kind);
     }
   }
 
@@ -406,15 +448,32 @@ export class ClaudeMind implements Mind {
     this.ledger.add(cost, pot);
   }
 
+  /** A pause never shortens one already running: a rate limit's minute can't cut a long rest short. */
   private pause(ms: number, why: string): void {
-    this.pausedUntil = Date.now() + ms;
+    const until = Date.now() + ms;
+    if (until <= this.pausedUntil) return;
+    this.pausedUntil = until;
     this.pausedWhy = why;
   }
 
-  private fail(log: Record<string, unknown>, why: string): { ok: false; why: string } {
+  /**
+   * Counts a failed call, rests Claude when it keeps failing or the money is gone (backoffMs), and says
+   * so in one line of the server log, with the reason only: never a key, never the prompt.
+   */
+  private fail(log: Record<string, unknown>, reason: string, kind?: Trouble['kind']): { ok: false; why: string } {
+    const why = scrub(reason);
+    const job = String(log.job ?? '?');
     this.s.failures += 1;
-    this.consecutiveFailures += 1;
-    if (this.consecutiveFailures >= 5 && !this.disabled) this.disabled = `${this.consecutiveFailures} failures in a row (last: ${why})`;
+    const n = (this.consecutiveFailures += 1);
+    let then = '';
+    if (kind === 'disable') then = ' · Claude is off until the next deploy';
+    else if (kind === 'no-money' || n >= FAILS_BEFORE_REST) {
+      const ms = backoffMs(n);
+      this.pause(ms, n >= FAILS_BEFORE_REST ? `${n} failures in a row (last: ${why})` : why);
+      then = ` · ${n >= FAILS_BEFORE_REST ? `${n} in a row, ` : ''}Claude rests ${Math.round(ms / 60_000)} min`;
+    }
+    this.lastFailures = [...this.lastFailures, { at: new Date().toISOString(), job, why }].slice(-10);
+    this.onLine(`${' '.repeat(10)}✗ ${job} failed: ${why}${then}`);
     this.write({ ...log, ok: false, why });
     return { ok: false, why };
   }

@@ -157,14 +157,32 @@ export async function nightly(s: State, day: number, records: Completed[], m: Mi
   return want ? { ...page, ask: addAsk(s, want, now) } : page;
 }
 
+/**
+ * What she can already do, so she never asks the Keeper for it: some asks were for things she has
+ * (a way to draw, to look things up), after an idea of her own that copied one "did not work out".
+ */
+export function canAlready(s: State): string {
+  const can = s.world.can;
+  const out = [
+    'draw at the workbench (charcoal, chalk, ink, berry paint, pressed leaves, pebbles)',
+    'whittle', 'tinker with broken things', 'build pebble dams', 'forage', 'explore the woods',
+  ];
+  if (can?.make) out.push('make real pictures, poems, short stories, songs and little games');
+  if (can?.net) out.push('look anything up on the old computer at the internet hut');
+  if (can?.post) out.push('post short notes on the internet from there');
+  if (can?.notes) out.push("read visitors' notes and write back");
+  return out.join('; ');
+}
+
 /** The fifth night job, said only on a night she may ask the Keeper for something. */
-function askSection(asks: { open: Ask[]; answered: Ask[] }): string[] {
+function askSection(asks: { open: Ask[]; answered: Ask[] }, can: string): string[] {
   const answerWord = { done: 'done', notnow: 'not now', no: 'no' } as const;
   return [
     '',
     'One more job tonight. 5. ask: the Keeper looks after the village and reads what Khina asks for once a day.',
     'Khina may ask the Keeper for ONE thing she cannot do herself and only the Keeper can: something for the village or her burrow, a tool or material, a new place, or something out in the world (like an account, or a way to share what she makes).',
     'It must come from what she actually did or wished for lately. Most nights she asks for nothing: then leave text and why empty.',
+    `What Khina can already do (never ask for these): ${can}.`,
     'Never money or buying, nothing to do with crypto, nothing about other people, and never asking the Keeper to contact anyone.',
     '- text: what she asks for, one plain sentence, first person, under 25 words.',
     '- why: one short sentence, first person.',
@@ -193,9 +211,20 @@ export function reflectPrompt(s: State, input: ReflectInput): string {
   if (input.patterns.length) {
     lines.push('', 'Patterns in the records (counted by code):', ...input.patterns.map((p) => `- ${p.id}: ${p.text}`));
   }
-  if (input.asks) lines.push(...askSection(input.asks));
+  // 16 of her first 45 pages began "I drew".
+  const openings = lastOpenings(s.pages);
+  if (openings.length) lines.push('', 'Her last pages began like this (start tonight\'s page differently from these):', ...openings.map((o) => `- "${o}…"`));
+  if (input.asks) lines.push(...askSection(input.asks, canAlready(s)));
   lines.push('', 'Do the night jobs.');
   return lines.join('\n');
+}
+
+/** The first few words of her last 3 night pages. */
+export function lastOpenings(pages: NightPage[], n = 3, words = 6): string[] {
+  return pages
+    .filter((p) => p.text)
+    .slice(-n)
+    .map((p) => p.text.split(/\s+/).slice(0, words).join(' ').replace(/[.,;:!?]+$/, ''));
 }
 
 export const REFLECT_SCHEMA = {

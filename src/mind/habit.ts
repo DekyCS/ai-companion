@@ -146,13 +146,21 @@ export function ownHabits(s: State): Set<string> {
   );
 }
 
-/** Words for Claude about how much this copy does an option: its own habit, or hardly ever. */
+/**
+ * Words for Claude about how much this copy does an option: its own habit, or not in a long while.
+ * The second was "Khina hardly ever does this" until 2026-11-20, which read as a reason not to.
+ */
 export function habitNote(s: State, def: ActionDef, own: Set<string>): string {
   if (!s.features.habitWords || !s.features.tastes || ROUTINE.has(def.id) || def.id === 'idle') return '';
   if (own.has(def.id)) return "one of Khina's habits";
   const cfg = taste.habitWords;
-  if (dayOf(s.t) >= cfg.rareFromDay && (s.tastes[`a:${def.id}`]?.practice ?? 0) < cfg.rareBelow) return 'Khina hardly ever does this';
+  if (dayOf(s.t) >= cfg.rareFromDay && practiceOf(s, def.id) < cfg.rareBelow) return 'Khina has not done this in a long while';
   return '';
+}
+
+/** Days of practice an action has (fading over weeks); 0 for one never done. */
+export function practiceOf(s: State, id: string): number {
+  return s.tastes[`a:${id}`]?.practice ?? 0;
 }
 
 /** The few actions Khina currently likes most (experienced at least 3 times). */

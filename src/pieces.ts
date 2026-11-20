@@ -31,9 +31,10 @@ export class PieceStore {
     return [...this.index];
   }
 
-  save(d: PieceDraft, t: number): PieceRef {
+  /** `by` is the action that made it: the workbench's "draw" or "make" (src/mind/making.ts formFor counts only "make"). */
+  save(d: PieceDraft, t: number, by?: PieceRef['by']): PieceRef {
     const id = `${t.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-    const ref: PieceRef = { id, form: d.form, title: d.title, t, about: d.about };
+    const ref: PieceRef = { id, form: d.form, title: d.title, t, about: d.about, ...(by ? { by } : {}) };
     const body: StoredPiece = { ...ref, text: d.text, notes: d.notes, tempo: d.tempo };
     writeFileSync(join(this.dir, `${id}.json`), JSON.stringify(body));
     if (d.form === 'picture') writeFileSync(join(this.dir, `${id}.svg`), d.svg);

@@ -1,11 +1,12 @@
 // Everything Khina can do in the village. Code decides what each action does to
 // each need and what actually happens; the model only proposes and narrates.
 
-import type { Effects } from '../config.ts';
+import { asking, type Effects } from '../config.ts';
 import type { Rng } from '../rng.ts';
-import { FOOD_IDS, pantryTotal, unreadNotes, type Activity, type AskAnswer, type FoodId, type NotesRead, type PieceForm, type State } from '../state.ts';
+import { FOOD_IDS, pantryTotal, unreadNotes, type Activity, type AskAnswer, type FoodId, type NotesRead, type PieceForm, type Reading, type State } from '../state.ts';
+import { sameQuestion } from '../mind/questions.ts';
 import { clock, hourOf, isDark, isNight, nextMorning } from '../time.ts';
-import type { PlaceId } from './places.ts';
+import { PLACES, type PlaceId } from './places.ts';
 import { bakeryOpen, isWet, names, nextTrain, presentAt, senderName, verb, VILLAGERS, type Letter, type VillagerId } from './village.ts';
 
 export interface Ctx {
@@ -106,6 +107,72 @@ function keeperLetter(letter: Letter): Outcome {
     thought: { key: `keeper-${status}`, text: a.thought(asked ? askShort(asked) : undefined), value: a.value, hours: a.hours },
   };
 }
+
+/** What she can draw with at the shed's workbench, and how it looks (the model is told). */
+export interface Medium {
+  name: string;
+  look: string;
+  /** "a charcoal drawing" */
+  made: string;
+  /** "in charcoal on bark" */
+  done: string;
+}
+
+/**
+ * Charcoal on bark is the habit (21 of her first 22 pictures were). About 1 time in 3 she reaches for
+ * something else on the shelf.
+ */
+export const MEDIA: Medium[] = [
+  { name: 'charcoal on a strip of bark', look: 'dark charcoal strokes and smudges on a bark-brown background, no other colours', made: 'a charcoal drawing', done: 'in charcoal on bark' },
+  { name: 'chalk on a piece of slate', look: 'pale, dusty chalk lines on a dark grey slate, white and one soft colour at most', made: 'a chalk drawing', done: 'in chalk on slate' },
+  { name: 'oak-gall ink on birch bark', look: 'thin brown-black ink lines and a few blots on pale, papery birch bark', made: 'an ink drawing', done: 'in ink on birch bark' },
+  { name: 'watercolour from berry juice', look: 'soft, runny washes of berry purple, pink and blue on pale paper, edges that bleed', made: 'a berry-juice painting', done: 'in berry juice' },
+  { name: 'pressed leaves and petals', look: 'flat cut shapes of leaves and petals, greens, yellows and browns, laid on pale paper', made: 'a pressed-leaf picture', done: 'in pressed leaves and petals' },
+  { name: 'a mosaic of pebbles', look: 'small rounded pebble shapes in greys, browns and creams, set close together on sand', made: 'a pebble mosaic', done: 'in pebbles' },
+];
+
+/**
+ * What a session at the workbench uses: charcoal two times in three, else one of the others in turn.
+ * Taken from the minute it starts, so the seeded random stream of an offline run is not touched.
+ */
+export function drawMedium(startedAt: number): Medium {
+  const others = MEDIA.slice(1);
+  return startedAt % 3 === 0 ? (others[Math.floor(startedAt / 3) % others.length] as Medium) : (MEDIA[0] as Medium);
+}
+
+const mediumOf = (act: Activity): Medium => MEDIA.find((m) => m.name === act.medium) ?? (MEDIA[0] as Medium);
+
+/** Words that name each medium in what she says she will draw, in MEDIA's order. */
+const MEDIUM_NAMED: RegExp[] = [
+  /\b(charcoal|bark)\b/i,
+  /\b(chalk|slate)\b/i,
+  /\b(ink|birch)\b/i,
+  /\b(berry[- ]juice|watercolou?rs?)\b/i,
+  /\b(pressed (leaves|petals|flowers)|petals)\b/i,
+  /\b(mosaic)\b/i,
+];
+
+/** The medium her words name, if they name one ("the voles by the mill, in charcoal"). Birch bark is ink, other bark charcoal. */
+export function mediumNamed(detail: string): Medium | null {
+  const i = MEDIUM_NAMED.findIndex((re, k) => re.test(detail) && !(k === 0 && /\bbirch\b/i.test(detail) && !/\bcharcoal\b/i.test(detail)));
+  return i >= 0 ? (MEDIA[i] as Medium) : null;
+}
+
+const MEDIUM_WORDS = String.raw`(?:charcoal|chalk|(?:oak-gall )?ink|berry[- ]juice|watercolou?rs?|pressed (?:leaves|petals|flowers)(?: and petals)?|(?:a )?(?:pebble )?mosaic(?: of pebbles)?|(?:a (?:strip|piece|scrap) of )?(?:birch )?(?:bark|slate))`;
+const MEDIUM_PHRASE = new RegExp(String.raw`,?\s*\b(?:in|with|on|using)\s+${MEDIUM_WORDS}(?:\s+(?:on|and)\s+${MEDIUM_WORDS})*`, 'gi');
+const MEDIUM_LEAD = new RegExp(String.raw`^(?:an?\s+)?${MEDIUM_WORDS}\s+(?:drawing|sketch|picture|painting)\s+of\s+`, 'i');
+
+/** What she draws, without what with: the medium is said once, by code, so records never read "in charcoal in chalk on slate". */
+export function withoutMedium(detail: string): string {
+  const out = detail.replace(MEDIUM_LEAD, '').replace(MEDIUM_PHRASE, '').replace(/\s+/g, ' ').trim();
+  return out || detail;
+}
+
+/** Shapes in the clouds over the clearing ("a train" was one, until trains filled her days). */
+const CLOUDS = [
+  'a teapot', 'a sleeping badger', 'a boot', 'nothing at all', 'a lopsided carrot', 'a heron with no legs',
+  'a slipper', 'a sheep falling over', 'an upside-down acorn', 'a mitten', 'a pear with ears', 'a spoon',
+];
 
 const FOOD: Record<FoodId, { one: string; fullness: number }> = {
   berries: { one: 'a few dried blackberries', fullness: 14 },
@@ -313,8 +380,10 @@ export const ACTIONS: ActionDef[] = [
   {
     id: 'draw',
     place: 'shed',
-    label: 'draw with charcoal on a strip of bark',
-    doing: 'drawing with charcoal',
+    // The label names no medium: "charcoal on bark" in it, Claude named charcoal in the detail, and with code
+    // picking chalk the records read "drew the oak roots in charcoal in chalk on slate".
+    label: 'draw at the workbench, with whatever is on the shelf',
+    doing: 'drawing at the workbench',
     gist: 'drawing',
     topic: 'making',
     effort: 'easy',
@@ -323,12 +392,18 @@ export const ACTIONS: ActionDef[] = [
     detailAsk: 'what to draw',
     details: ['the old oak', 'Bramwell asleep behind the counter', 'the train', 'a very tall dandelion', 'rain on the stream'],
     work: 'piece',
+    begin: (_c, act) => {
+      // What she named, if she named something; else code's pick. Either way it is said once, by code.
+      act.medium = (mediumNamed(act.detail) ?? drawMedium(act.startedAt)).name;
+      act.detail = withoutMedium(act.detail);
+    },
     outcome: ({ rng }, act) => {
       const r = act.result;
+      const m = mediumOf(act);
       if (r?.kind === 'piece')
         return {
-          text: `drew "${r.piece.title}" in charcoal on bark (${act.detail})`,
-          made: `a charcoal drawing, "${r.piece.title}"`,
+          text: `drew "${r.piece.title}" ${m.done} (${act.detail})`,
+          made: `${m.made}, "${r.piece.title}"`,
           thought: { key: 'made', text: `Drew "${r.piece.title}"`, value: 4, hours: 10 },
         };
       if (r)
@@ -339,8 +414,8 @@ export const ACTIONS: ActionDef[] = [
         };
       return rng.chance(0.85)
         ? {
-            text: `drew ${act.detail} in charcoal on bark`,
-            made: `a charcoal drawing of ${act.detail.replace(/^(an? )?(quick )?(charcoal )?(sketch|drawing|picture) of /i, '')}`,
+            text: `drew ${act.detail} ${m.done}`,
+            made: `${m.made} of ${act.detail.replace(/^(an? )?(quick )?(charcoal |chalk |ink )?(sketch|drawing|picture|painting) of /i, '')}`,
             thought: { key: 'made', text: `Drew ${act.detail}`, value: 3, hours: 8 },
           }
         : {
@@ -794,8 +869,10 @@ export const ACTIONS: ActionDef[] = [
     effects: { calm: 16, rest: 8 },
     blocked: ({ s, at }) =>
       isWet(s.world.weather) ? 'the moss was soaking wet' : isDark(at) ? 'there were no clouds to see in the dark' : null,
+    // Five shapes made a tic in 48 live days (a boot 19 times, a train 13, a teapot 12). Still one pick, so
+    // the seeded random stream is the same.
     outcome: ({ rng }) => ({
-      text: `lay in the moss watching the clouds; one looked like ${rng.pick(['a teapot', 'a sleeping badger', 'a train', 'a boot', 'nothing at all'])}`,
+      text: `lay in the moss watching the clouds; one looked like ${rng.pick(CLOUDS)}`,
     }),
   },
 
@@ -908,15 +985,28 @@ export const ACTIONS: ActionDef[] = [
     detailAsk: 'what to look up: a question Khina wonders about',
     details: ['why do rabbits thump their back feet', 'why do herons stand so still'],
     blocked: ({ s }) => (s.world.can?.net ? null : 'the old computer would not switch on'),
+    // What she already asked, so she wonders about something else (12 of 24 live lookups were one question).
+    note: ({ s }) => {
+      const asked = lastQuestions(s.readings ?? [], asking.listed);
+      return asked.length ? `already looked up: ${asked.map((q) => `"${q}"`).join(', ')}` : '';
+    },
     work: 'web',
-    outcome: (_c, act) => {
+    outcome: ({ s }, act) => {
       const r = act.result;
-      if (r?.kind === 'web' && r.again)
+      if (r?.kind === 'web' && r.again) {
+        const learned = r.reading.learned.replace(/^[A-Z]/, (c) => c.toLowerCase());
+        // The thought used to name the question for a day, which kept it on her mind and pulled her back:
+        // now neither thought names it, and a question she keeps coming back to is worn out, a push away.
+        // Thoughts rank by strength in her prompts, so a named one stayed in front of the model for days.
+        const worn = wornOut(r.reading, s.t);
         return {
-          text: `went to look up "${r.reading.question}" again, then remembered the answer from last time: ${r.reading.learned.replace(/^[A-Z]/, (c) => c.toLowerCase())}`,
+          text: `went to look up "${r.reading.question}" again, then remembered the answer from last time: ${learned}`,
           extra: { novelty: -20 },
-          thought: { key: 'asked-again', text: `I already knew about "${r.reading.question}"; I should ask the computer something new`, value: -1, hours: 24 },
+          thought: worn
+            ? { key: 'worn-out', text: 'Asked the old computer the same thing yet again. That one is worn out; nothing new left in it', value: -2, hours: 24 }
+            : { key: 'asked-again', text: 'Went to ask the old computer something I already knew. I should wonder about something new', value: -1, hours: 12 },
         };
+      }
       if (r?.kind === 'web')
         return {
           text: `looked up "${r.reading.question}" on the internet and found out that ${r.reading.learned.replace(/^[A-Z]/, (c) => c.toLowerCase())}`,
@@ -1058,6 +1148,26 @@ export const OWN_FALLBACK: { detail: string; kind: OwnKind }[] = [
   { detail: 'rearrange the finds by colour', kind: 'home' },
 ];
 
+/**
+ * Her last few questions at the internet hut, newest first, without the question mark, and one question
+ * once in any words (sameQuestion, as the hut itself checks): with only exact repeats left out, 5 of the
+ * 6 listed on the live save were the trains skipping stops, in every decide prompt.
+ */
+export function lastQuestions(readings: Reading[], n: number): string[] {
+  const out: string[] = [];
+  for (const r of [...readings].reverse()) {
+    const q = r.question.replace(/[\s?.!]+$/, '');
+    if (q && !out.some((x) => x.toLowerCase() === q.toLowerCase() || sameQuestion(x, q))) out.push(q);
+    if (out.length >= n) break;
+  }
+  return out;
+}
+
+/** She went back to this question again and again lately: it is worn out (src/sim.ts keeps the times). */
+export function wornOut(r: Reading, now: number): boolean {
+  return (r.again ?? []).filter((t) => t > now - asking.wornWithinMin).length >= asking.wornTimes;
+}
+
 /** More unread notes than this is a bit much: she can't read them all, like a real inbox. */
 export const NOTES_A_LOT = 40;
 
@@ -1105,13 +1215,31 @@ function notesOutcome(read: NotesRead): Outcome {
   };
 }
 
-function ownOutcome({ s, rng }: Ctx, act: Activity) {
+/** Ideas about the night itself (watch the stars, listen for owls) that the dark can't stop, or that need no light. */
+const OF_THE_DARK = /\b(night\w*|dark\w*|dusk|stars?|starlight|moon\w*|owls?|bats?|firefl\w*|glow\w*|crickets?|listen\w*|hear\w*|sniff\w*|smell\w*|feel\w*)\b/i;
+/** Ideas about the rain itself (watch the rain drip off the roots, splash in puddles), that the rain can't stop. */
+const OF_THE_WET = /\b(rain\w*|puddles?|drips?|dripp\w*|drizzl\w*|wet\w*|splash\w*|storm\w*|droplets?|mud\w*)\b/i;
+/** Kinds of idea that need light to do outdoors: making, finding out, pottering. Nature (looking, listening) need not. */
+const NEEDS_LIGHT = new Set<OwnKind>(['making', 'exploring', 'home']);
+
+/**
+ * Her own idea happens, unless something in the world stops it: nobody about for a social idea, hard rain
+ * for one outdoors (not one about the rain), or, for one that needs light, starting it outdoors after dark
+ * (not one about the night). There used to be a blind 15% "did not work out" as well, and those made-up
+ * failures went into her diary and her asks to the Keeper as if they had happened for a reason. The dark
+ * counts when she starts, not when she finishes: one begun at 19:40 is not stopped by 20:00 coming.
+ */
+function ownOutcome({ s }: Ctx, act: Activity) {
   const kind = act.actionId.split('.')[1] as OwnKind | undefined;
   if (kind === 'social' && presentAt(s.world, act.place).length === 0)
     return { text: `went to ${act.detail}, but nobody was about`, extra: { company: -6 }, thought: { key: 'alone', text: 'Nobody was about', value: -2, hours: 3 } };
-  return rng.chance(0.85)
-    ? { text: `did something of Khina's own: ${act.detail}`, thought: { key: 'own', text: `Did my own thing: ${act.detail}`, value: 3, hours: 8 } }
-    : { text: `tried something of Khina's own (${act.detail}), and it did not work out`, extra: { calm: -4 }, thought: { key: 'own', text: `My idea did not work out: ${act.detail}`, value: -2, hours: 3 } };
+  const outdoors = PLACES[act.place].outdoors && kind !== undefined && kind !== 'social' && kind !== 'rest';
+  const rained = outdoors && s.world.weather === 'rain' && !OF_THE_WET.test(act.detail);
+  const dark = outdoors && NEEDS_LIGHT.has(kind as OwnKind) && isDark(act.startedAt) && !OF_THE_DARK.test(act.detail);
+  const why = rained ? 'the rain came down too hard' : dark ? 'it was too dark to see' : '';
+  if (why)
+    return { text: `went out for an idea of Khina's own (${act.detail}), but ${why}; left it for another day`, extra: { calm: -3 }, thought: { key: 'own', text: `Had to leave my idea for another day: ${act.detail}`, value: -1, hours: 3 } };
+  return { text: `did something of Khina's own: ${act.detail}`, thought: { key: 'own', text: `Did my own thing: ${act.detail}`, value: 3, hours: 8 } };
 }
 
 const OWN_DEFS: Record<string, ActionDef> = Object.fromEntries(

@@ -22,6 +22,8 @@ export interface Option {
   note: string;
   /** How overdone it is lately (0 = not at all). */
   familiarity: number;
+  /** The one option added to Claude's menu as something she has not done in a long while (decide.ts). */
+  tryNew?: boolean;
 }
 
 export type Tier = 'exhausted' | 'starving' | null;

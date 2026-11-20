@@ -49,6 +49,8 @@ export interface Activity {
   result?: WorkResult;
   /** A visitor's note gave her the idea: the name they gave ("a visitor" without one). Shown on the site. */
   nudgedBy?: string;
+  /** Drawing at the workbench: what with ("charcoal on a strip of bark"; see MEDIA in src/world/actions.ts). */
+  medium?: string;
 }
 
 /** The kinds of real piece Khina can make. */
@@ -64,6 +66,8 @@ export interface PieceRef {
   t: number;
   /** What Khina set out to make, in Khina's words. */
   about: string;
+  /** Which action made it: drawing at the workbench, or "make". Missing on pieces from before 2026-11-20. */
+  by?: 'draw' | 'make';
 }
 
 /** Something Khina looked up at the internet hut, and what came of it. */
@@ -73,6 +77,8 @@ export interface Reading {
   /** What Khina took from it, in plain words. */
   learned: string;
   sources: { title: string; url: string }[];
+  /** Game minutes she went to ask it again (in other words) and remembered instead; the last few only. */
+  again?: number[];
 }
 
 /** A short public post Khina wrote at the internet hut (shown on the site; sent out only if an account is connected). */

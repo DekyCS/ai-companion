@@ -1,14 +1,14 @@
 // The decision loop. Code builds the menu and makes the final random pick;
 // the model, when it is on, only proposes a few candidates with reasons.
 
-import { mind, taste } from '../config.ts';
+import { habit, mind, NEEDS, taste } from '../config.ts';
 import type { Rng } from '../rng.ts';
 import type { Completed, Note, Origin, PieceRef, Reading, State } from '../state.ts';
 import { nudgeFor, visitorWho, type NotesAnswer } from '../notes.ts';
 import type { PieceDraft, PieceRequest } from './making.ts';
-import { actionDef, OWN_FALLBACK, OWN_KINDS, type OwnKind } from '../world/actions.ts';
+import { actionDef, BEYOND_IDS, OWN_FALLBACK, OWN_KINDS, type OwnKind } from '../world/actions.ts';
 import { PLACE_IDS, type PlaceId } from '../world/places.ts';
-import { favourites, habits } from './habit.ts';
+import { favourites, habits, practiceOf, ROUTINE } from './habit.ts';
 import { options, shortlist, tier, type Option } from './score.ts';
 import type { ReflectInput, ReflectOutput } from './sleep.ts';
 
@@ -22,6 +22,8 @@ export interface Candidate {
   kind?: string;
   /** Added by code (its own favourite), not proposed by the model. */
   fromCode?: boolean;
+  /** Proposed as an idea of her own, and turned into "make" by code (routeOwnIdeas). */
+  ownIdea?: boolean;
 }
 
 export type Proposal = { ok: true; candidates: Candidate[] } | { ok: false; why: string };
@@ -214,14 +216,113 @@ export async function decide(s: State, rng: Rng, m: Mind, id: number): Promise<D
   // possible they are always on the menu, and the body's score still weighs the final pick. So is
   // what a visitor's note gave her the idea for, while that idea lasts: a pull she can see, not an order.
   for (const o of all) if ((ALWAYS_OFFERED.has(o.def.id) || nudgeFor(s, o.def.id)) && !list.includes(o)) list = [...list, o];
-  const d = await choose(s, rng, m, id, list);
+  const d = await choose(s, rng, m, id, list, all);
   if (explore) d.explore = true;
   return d;
 }
 
-async function choose(s: State, rng: Rng, m: Mind, id: number, list: Option[]): Promise<Decision> {
-  const why = autopilotReason(s, list, m);
-  if (why) return autopilot(s, list, rng, why, 'autopilot', id);
+/**
+ * Doors to anything, what costs money or reaches outside (a real piece, a lookup, a post), and the body's
+ * routine: never the slot for something not done in a long while ("make" was offered as "half minded to
+ * try it again" whenever it was her least-practised action, and it is a paid piece).
+ */
+const NOT_A_PASTIME = new Set([...ALWAYS_OFFERED, ...BEYOND_IDS, 'idle', ...ROUTINE]);
+
+/**
+ * The possible action she has practised least, when it is not on the menu already; of equals, the one
+ * that suits the moment best. With needs mostly full, practice picks the shortlist, and an action never
+ * done never gains practice: in 48 live days six of her 31 actions were never once on her menu.
+ */
+export function tryNewOption(s: State, all: Option[], list: Option[]): Option | null {
+  if (!taste.tryNewSlot || !s.features.tastes || tier(s)) return null;
+  const listed = new Set(list.map((o) => o.def.id));
+  let best: Option | null = null;
+  // `all` is best first, so the first of equals is the one code likes most right now.
+  for (const o of all) {
+    if (listed.has(o.def.id) || NOT_A_PASTIME.has(o.def.id)) continue;
+    if (!best || practiceOf(s, o.def.id) < practiceOf(s, best.def.id)) best = o;
+  }
+  return best ? { ...best, tryNew: true } : null;
+}
+
+/**
+ * An idea "of her own" that is really one of her actions. Drawing, painting or writing is "make": the
+ * body weighs it as making and the Gallery gets the real piece. The computer (typing, posting, looking
+ * things up) is dropped: browse and post are the costed, capped way to it. Both used to run as an own
+ * idea with a blind 15% chance of failing, and those made-up failures went into her diary and her asks.
+ */
+const OWN_AS_MAKE = /\b(draw|drawing|drawings|sketch\w*|charcoal|chalk|paint\w*|poem|poems|verse|song|songs|story|stories)\b/i;
+/** Hearing, telling, singing or humming a song or a story is not making one... */
+const NOT_MAKING = /\b(listen\w*|hear\w*|tell\w*|told|sing\w*|sang|hum|hums|humm\w*|read\w*|recit\w*)\b/i;
+/** ...unless she makes it up as well ("write a song to sing to the voles"). */
+const MAKING_VERB = /\b(make|makes|making|made|write|writes|writing|wrote|compos\w*|draw|draws|drawing|sketch\w*|scribbl\w*|doodl\w*)\b/i;
+/** Drawing water and painting the letterbox red are not pictures. */
+const NOT_A_PICTURE = /\bdraw(?:s|ing)?\s+(?:up\s+)?(?:some\s+)?(?:water|a bucket|breath|near\w*|close\w*|back|the curtains?)\b|\bpaint\w*\s+(?:the |a |an |her |my )?(?:\w+\s+){0,2}(?:red|blue|green|yellow|white|black|pink|purple|orange|brown)\b/i;
+/**
+ * "look it up" and "look up herons" are the computer; "look up at the clouds" and "look up the hill" are
+ * not. "posting a letter" is the letterbox's business, not the computer's.
+ */
+const OWN_AS_COMPUTER = /\b(computer|internet|online|website|typ(?:ing|ed)|type (?:up|out|a|on)|posting(?!\s+(?:a |the |her |my )?(?:letter|note|card|parcel|package)s?\b)|(?:a|short) post (?:for|on|about)|look(?:s|ed|ing)? (?:\w+ )?up\b(?!\s+(?:at|into|to|towards?|through|from|in|(?:the |a )?(?:hill|sky|tree|oak|lane|path|slope|bank|stream|track|road|trunk|branch\w*|clouds?|stars?|moon|chimney|stairs?|steps)\b)))/i;
+
+export function ownCopy(c: Candidate): 'make' | 'drop' | null {
+  const what = ownDetail(c);
+  if (OWN_AS_COMPUTER.test(what)) return 'drop';
+  if (!OWN_AS_MAKE.test(what) || NOT_A_PICTURE.test(what)) return null;
+  return NOT_MAKING.test(what) && !MAKING_VERB.test(what) ? null : 'make';
+}
+
+/** What an own idea is: its detail or, without one, what its reason says ("I want to sniff the evening air"). */
+function ownDetail(c: Candidate): string {
+  const fromReason = (c.reason ?? '').replace(/^(I('d| would)? (want|like|need) to|Could|Might|Time to|Let me)\s+/i, '').replace(/[.;].*$/, '');
+  let detail = (c.detail || fromReason).replace(/\s+/g, ' ').trim();
+  if (detail.length > 70) detail = detail.slice(0, 70).replace(/[\s,;:]+\S*$/, '');
+  return detail;
+}
+
+/**
+ * Code's best option for her worst pressing need that none of the candidates helps; else null. It joins
+ * the candidates at the model's top weight, and the pick stays a weighted draw. Against the stuck stand-in
+ * (8 seeds × 40 days, calm and making decaying faster) it took days passing every check from 81% to 97%
+ * (98% before the faster decay); at the line (35) instead of pressing (55), at a middling weight, or only
+ * for the single worst need, it helped far less.
+ */
+export function bodysVote(s: State, all: Option[], valid: Candidate[], byId: Map<string, Option>): Option | null {
+  const helped = (n: string) => valid.some((c) => byId.get(c.action)?.helps.includes(n as never));
+  const worst = NEEDS.filter((n) => s.needs[n] < habit.pressingBelow && !helped(n)).sort((a, b) => s.needs[a] - s.needs[b])[0];
+  if (!worst) return null;
+  // Never a door or anything that costs or reaches outside: a post nobody chose would go out about a stock
+  // detail ("the picture I drew of the stream"), with details the records don't have, and spend a post.
+  return all.find((o) => o.helps[0] === worst && !COSTED.has(o.def.id) && !valid.some((c) => c.action === o.def.id)) ?? null;
+}
+
+/** Doors to anything, and what costs money or reaches outside: only ever chosen by the model, never added by code. */
+const COSTED = new Set([...ALWAYS_OFFERED, ...BEYOND_IDS]);
+
+/** Turns own ideas that copy a real action into that action, or drops them (ownCopy). */
+function routeOwnIdeas(marked: (Candidate & { valid: boolean })[], byId: Map<string, Option>, all: Option[]): void {
+  const make = all.find((o) => o.def.id === 'make');
+  for (const c of marked) {
+    if (!c.valid || c.action !== 'own') continue;
+    const copy = ownCopy(c);
+    if (copy === 'drop') c.valid = false;
+    if (copy !== 'make') continue;
+    // "make" is possible (budget left, not just done) and not proposed already: the idea becomes it.
+    if (!make || marked.some((x) => x.valid && x.action === 'make')) {
+      c.valid = false;
+      continue;
+    }
+    byId.set('make', make);
+    Object.assign(c, { action: 'make', detail: ownDetail(c), ownIdea: true });
+  }
+}
+
+async function choose(s: State, rng: Rng, m: Mind, id: number, offered: Option[], all: Option[] = offered): Promise<Decision> {
+  const why = autopilotReason(s, offered, m);
+  if (why) return autopilot(s, offered, rng, why, 'autopilot', id);
+  // One slot for something she has not done in a long while, only when the model is asked: added before,
+  // it reached code's own top few when the menu was short (at bedtime), and made a 2-option menu a call.
+  const fresh = tryNewOption(s, all, offered);
+  const list = fresh ? [...offered, fresh] : offered;
 
   const proposal = await m.propose(s, list, rng);
   if (!proposal.ok) return autopilot(s, list, rng, `model failed: ${proposal.why}`, 'fallback', id);
@@ -233,6 +334,7 @@ async function choose(s: State, rng: Rng, m: Mind, id: number, list: Option[]): 
     seen.add(c.action);
     return { ...c, valid };
   });
+  routeOwnIdeas(marked, byId, all);
   const valid = marked.filter((c) => c.valid);
   if (valid.length === 0) {
     const d = autopilot(s, list, rng, 'model picked nothing on the menu', 'fallback', id);
@@ -250,6 +352,16 @@ async function choose(s: State, rng: Rng, m: Mind, id: number, list: Option[]): 
     valid.push(extra);
   }
 
+  // A pressing need always gets a vote: code owns the body, and a model stuck on its favourites must
+  // not leave her lonely all day (with calm and making dipping again, it did: src/config.ts decayAwake).
+  const need = bodysVote(s, all, valid, byId);
+  if (need) {
+    const extra = { action: need.def.id, reason: templateReason(need, s, rng), weight: Math.max(...valid.map((c) => c.weight)), detail: '', valid: true, fromCode: true };
+    byId.set(need.def.id, need);
+    marked.push(extra);
+    valid.push(extra);
+  }
+
   // The model's weights are flattened (they are not calibrated) and multiplied by code's score,
   // so the model shapes the choice but cannot overrule the body.
   const combined = valid.map((c) => {
@@ -262,12 +374,14 @@ async function choose(s: State, rng: Rng, m: Mind, id: number, list: Option[]): 
   const pick = rng.weighted(kept, (x) => x.w);
 
   const own = pick.o.def.id === 'own' ? ownChoice(pick.c, s.place, rng) : null;
+  // An own idea turned into "make" still happens where she meant to do it ("sketch the stream").
+  const where = own?.place ?? (pick.c.ownIdea ? ownPlace(pick.c, s.place) : undefined);
   return {
     id,
     t: s.t,
     actionId: own ? own.actionId : pick.o.def.id,
     detail: own ? own.detail : pickDetail(pick.o, rng, pick.c.detail),
-    place: own?.place,
+    place: where,
     reason: pick.c.reason.replace(/\s+/g, ' ').trim().slice(0, 120) || templateReason(pick.o, s, rng),
     origin: 'model',
     why: '',
@@ -281,14 +395,16 @@ async function choose(s: State, rng: Rng, m: Mind, id: number, list: Option[]): 
 export function ownChoice(c: Candidate, here: PlaceId, rng: Rng): { actionId: string; detail: string; place: PlaceId } {
   const kind = (OWN_KINDS as readonly string[]).includes(c.kind ?? '') ? (c.kind as OwnKind) : null;
   // Without a "what", the reason usually says it ("I want to sniff the evening air").
-  const fromReason = (c.reason ?? '').replace(/^(I('d| would)? (want|like|need) to|Could|Might|Time to|Let me)\s+/i, '').replace(/[.;].*$/, '');
-  let detail = (c.detail || fromReason).replace(/\s+/g, ' ').trim();
-  if (detail.length > 70) detail = detail.slice(0, 70).replace(/[\s,;:]+\S*$/, '');
+  const detail = ownDetail(c);
   if (!detail || !kind) {
     const f = rng.pick(OWN_FALLBACK);
     return { actionId: `own.${f.kind}`, detail: f.detail, place: here };
   }
-  // The internet hut's computer is reached through "browse", which is costed and capped.
-  const place = (PLACE_IDS as string[]).includes(c.place ?? '') && c.place !== 'nethut' ? (c.place as PlaceId) : here;
-  return { actionId: `own.${kind}`, detail, place };
+  return { actionId: `own.${kind}`, detail, place: ownPlace(c, here) };
+}
+
+/** Where an own idea happens: the place she named, if it is a real one. The internet hut's computer is
+ * reached through "browse", which is costed and capped. */
+function ownPlace(c: Candidate, here: PlaceId): PlaceId {
+  return (PLACE_IDS as string[]).includes(c.place ?? '') && c.place !== 'nethut' ? (c.place as PlaceId) : here;
 }

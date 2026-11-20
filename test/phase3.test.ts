@@ -54,7 +54,7 @@ test('the numbers experiment shows needs as numbers; normally Claude sees only w
   }
 });
 
-test("Claude's menu marks this copy's own habits and what it hardly ever does", () => {
+test("Claude's menu marks this copy's own habits and what it has not done in a long while", () => {
   const s = newState(1);
   for (let d = 1; d <= 6; d++) {
     s.t = at(d, 10);
@@ -63,7 +63,8 @@ test("Claude's menu marks this copy's own habits and what it hardly ever does", 
   const own = ownHabits(s);
   assert.ok(own.has('fish'));
   assert.equal(habitNote(s, actionDef('fish'), own), "one of Khina's habits");
-  assert.equal(habitNote(s, actionDef('paddle'), own), 'Khina hardly ever does this');
+  // Not "hardly ever" any more: that read as a reason not to.
+  assert.equal(habitNote(s, actionDef('paddle'), own), 'Khina has not done this in a long while');
   assert.equal(habitNote(s, actionDef('sleep'), own), '', 'routine needs no note');
   s.t = at(2, 10);
   assert.equal(habitNote(s, actionDef('paddle'), own), '', 'too early to call anything rare');
@@ -111,7 +112,12 @@ test('identical copies become different individuals with tastes and practice, no
   };
   const off = await run({ ...ALL_ON, tastes: false });
   const on = await run(ALL_ON);
+  // Much weaker since 2026-11-20, because practice pulls at most 3×, not 8× (taste.practiceMax): over 8
+  // personalities ratio 4.1 → 1.35 and 3-day blocks 66% → 31% (chance 20%); with the new decay and a pull
+  // of 8× it is still 3.4 and 67%, so it is the cap, not the faster decay. Copies still differ more than
+  // they drift, and twice as much as without tastes. Blocks matched is no longer asserted: at this size
+  // it is noise now (these copies without tastes matched 32%, with them 26%).
   assert.ok(off.ratio < 1, `without tastes, copies differ less than they drift: ${off.ratio.toFixed(2)}`);
-  assert.ok(on.ratio > 1.5, `with tastes, copies differ more than they drift: ${on.ratio.toFixed(2)}`);
-  assert.ok(on.blocks >= 0.45, `3-day blocks matched to the right copy: ${on.blocks.toFixed(2)} (chance 0.20)`);
+  assert.ok(on.ratio > 1.2, `with tastes, copies differ more than they drift: ${on.ratio.toFixed(2)} (blocks ${on.blocks.toFixed(2)}, chance 0.20)`);
+  assert.ok(on.ratio > 2 * off.ratio, `and much more than without tastes: ${on.ratio.toFixed(2)} vs ${off.ratio.toFixed(2)}`);
 });

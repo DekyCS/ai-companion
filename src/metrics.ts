@@ -2,10 +2,11 @@
 // (arXiv 2607.08252): rolling 5-day category repetition 95.2–97.6%, top-3 share 57.1%,
 // top-5 share 75.4%, theme repetition 79–88%.
 
+import { NEEDS } from './config.ts';
 import { completeDays, dayReport } from './report.ts';
 import { reportDay, type Sim } from './sim.ts';
 import type { Completed } from './state.ts';
-import { actionDef } from './world/actions.ts';
+import { ACTIONS, actionDef, BEYOND_IDS } from './world/actions.ts';
 
 export interface LongMetrics {
   days: number;
@@ -29,7 +30,17 @@ export interface LongMetrics {
   lowMood: number;
   /** Things found, new paths seen and things made, per week. */
   newPerWeek: number;
+  /** How many times each action was done (her own ideas counted as "own"). */
+  actions: Record<string, number>;
+  /** Each need over her waking hours: 10th percentile, median, and the share of hours below 55. */
+  needs: Record<string, { p10: number; median: number; below55: number }>;
 }
+
+/**
+ * Every pastime she could choose on any day. Sleep, idling and the world-beyond actions (they need a
+ * budget the code-only runs do not have) are left out, so "never chosen" means a real gap.
+ */
+export const PASTIMES = ACTIONS.map((a) => a.id).filter((id) => id !== 'idle' && id !== 'sleep' && !BEYOND_IDS.has(id));
 
 const isEvent = (r: Completed) => r.kind === 'done' && r.actionId !== 'idle' && r.actionId !== 'sleep';
 
@@ -95,6 +106,11 @@ export function measure(sim: Sim, runStart: number, runEnd: number): LongMetrics
 
   const reports = days.map((d) => dayReport(sim, d));
   const hours = sim.hours.filter((h) => days.includes(reportDay(h.t)));
+  const actions: Record<string, number> = {};
+  for (const r of events) {
+    const id = r.actionId.split('.')[0] as string;
+    actions[id] = (actions[id] ?? 0) + 1;
+  }
   const s = sim.s;
   // Every find or sight ever taken from the pools, plus everything made.
   const newThings = s.world.used.length - s.world.findsLeft.length - s.world.sightsLeft.length + s.made.length;
@@ -114,5 +130,18 @@ export function measure(sim: Sim, runStart: number, runEnd: number): LongMetrics
     moodMean: mean(hours.map((h) => h.mood)),
     lowMood: hours.length ? hours.filter((h) => h.mood < 38).length / hours.length : 0,
     newPerWeek: (Math.max(0, newThings) / Math.max(1, days.length)) * 7,
+    actions,
+    needs: needSpread(hours.filter((h) => h.doing !== 'asleep in bed')),
   };
+}
+
+/** Until 2026-11-20 calm and making sat near 100 all day; this is how a long run shows whether needs dip. */
+function needSpread(awake: Sim['hours']): LongMetrics['needs'] {
+  const out: LongMetrics['needs'] = {};
+  for (const n of NEEDS) {
+    const v = awake.map((h) => h.needs[n]).sort((a, b) => a - b);
+    const at = (f: number) => Math.round(v[Math.floor(f * (v.length - 1))] ?? 0);
+    out[n] = { p10: at(0.1), median: at(0.5), below55: v.length ? v.filter((x) => x < 55).length / v.length : 0 };
+  }
+  return out;
 }

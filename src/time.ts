@@ -55,6 +55,25 @@ export function partOfDay(t: number): string {
   return 'night';
 }
 
+/**
+ * A finer part of the day, for her diary ("mid-morning"). Given the clock time, 34% of her live diary
+ * lines opened with it ("At 07:04 I…").
+ */
+export function timeWords(t: number): string {
+  const h = minuteOfDay(t) / 60;
+  if (h < 4.5) return 'the middle of the night';
+  if (h < 6) return 'before dawn';
+  if (h < 8.5) return 'early morning';
+  if (h < 11) return 'mid-morning';
+  if (h < 13) return 'around midday';
+  if (h < 15) return 'early afternoon';
+  if (h < 17.5) return 'late afternoon';
+  if (h < 19.5) return 'early evening';
+  if (h < 21.5) return 'evening';
+  if (h < 23) return 'late evening';
+  return 'the middle of the night';
+}
+
 /** The game time of the next 06:00 after t. */
 export function nextMorning(t: number): number {
   const sixToday = (dayOf(t) - 1) * DAY + 360;
