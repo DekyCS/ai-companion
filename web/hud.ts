@@ -60,6 +60,39 @@ export interface DiaryLine {
   place: string;
   actionId?: string;
 }
+/** Khina's answer to a visitor's note: public, with the note it answers. */
+export interface NoteReply {
+  id: string;
+  name: string;
+  note: string;
+  reply: string;
+  /** Real time she wrote it (epoch ms). */
+  at: number;
+  t: number;
+  clock?: string;
+  day?: number;
+}
+/** A note this browser sent, kept in this browser only (the server never shows an unread note to anyone). */
+export interface MyNote {
+  id: string;
+  name: string;
+  text: string;
+  at: number;
+}
+export interface MineStatus {
+  id: string;
+  status: 'waiting' | 'read' | 'answered' | 'gone';
+  reply?: NoteReply;
+}
+/** An unread note, as only the Keeper sees it. */
+export interface InboxNote {
+  id: string;
+  name: string;
+  text: string;
+  at: number;
+  clock?: string;
+  day?: number;
+}
 export interface HudActivity {
   kind: 'walk' | 'act';
   actionId: string;
@@ -69,6 +102,8 @@ export interface HudActivity {
   detail: string;
   reason: string;
   origin: string;
+  /** A visitor's note gave her the idea: the name they gave ("a visitor" without one). */
+  nudgedBy?: string;
 }
 export interface HudSnap {
   t: number;
@@ -93,6 +128,10 @@ export interface HudSnap {
   moodArc?: { t: number; mood: number }[];
   /** What she asked the Keeper for, newest first. */
   asks?: Ask[];
+  /** Visitors' notes waiting at the internet hut (a count only). */
+  unreadCount?: number;
+  /** Her latest answers to visitors' notes, newest first. */
+  replies?: NoteReply[];
 }
 
 /** Where pieces come from: the server, or made-up ones for ?mock. */
@@ -128,6 +167,79 @@ export const httpSource: PieceSource = {
   toyFrame: (id) => ({ src: `/pieces/${safeId(id)}.html` }),
 };
 
+// ---------- visitor notes ----------
+/** Where notes go and how they are doing: the server, or made-up ones for ?mock. */
+export interface NotesSource {
+  /** This browser's own notes, newest first. */
+  kept(): MyNote[];
+  keep(n: MyNote): void;
+  mine(ids: string[]): Promise<MineStatus[] | null>;
+  send(body: { name: string; text: string; website: string }): Promise<{ status: number; id?: string; name?: string; error?: string } | null>;
+}
+
+/** localStorage can be off (private windows, blocked storage): every use is wrapped, and the page works without it. */
+function storeGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function storeSet(key: string, value: string | null): void {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    /* storage is off: it lasts until the page is closed */
+  }
+}
+
+const MY_NOTES = 'khina.myNotes';
+const MY_NOTES_MAX = 20;
+const isMyNote = (x: unknown): x is MyNote => {
+  const n = x as MyNote;
+  return !!n && typeof n.id === 'string' && /^[0-9a-f]{16}$/.test(n.id) && typeof n.text === 'string' && typeof n.at === 'number';
+};
+/** The same list in memory, for when storage is off. */
+let keptHere: MyNote[] = [];
+
+export const httpNotes: NotesSource = {
+  kept() {
+    const raw = storeGet(MY_NOTES);
+    if (raw === null) return keptHere;
+    try {
+      const j: unknown = JSON.parse(raw);
+      return Array.isArray(j) ? j.filter(isMyNote).slice(0, MY_NOTES_MAX) : [];
+    } catch {
+      return [];
+    }
+  },
+  keep(n) {
+    keptHere = [n, ...this.kept().filter((x) => x.id !== n.id)].slice(0, MY_NOTES_MAX);
+    storeSet(MY_NOTES, JSON.stringify(keptHere));
+  },
+  async mine(ids) {
+    if (!ids.length) return [];
+    try {
+      const r = await fetch(`/notes/mine?ids=${ids.map(encodeURIComponent).join(',')}`);
+      if (!r.ok) return null;
+      const j = (await r.json()) as { notes?: MineStatus[] };
+      return Array.isArray(j.notes) ? j.notes : null;
+    } catch {
+      return null;
+    }
+  },
+  async send(body) {
+    try {
+      const r = await fetch('/notes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      const j = (await r.json().catch(() => ({}))) as { id?: unknown; name?: unknown; error?: unknown };
+      return { status: r.status, id: typeof j.id === 'string' ? j.id : undefined, name: typeof j.name === 'string' ? j.name : undefined, error: typeof j.error === 'string' ? j.error : undefined };
+    } catch {
+      return null;
+    }
+  },
+};
+
 export type Mode = 'khina' | 'player';
 export interface Hud {
   update(s: HudSnap): void;
@@ -135,13 +247,21 @@ export interface Hud {
   reading(r: Reading): void;
   post(p: Post): void;
   ask(a: Ask): void;
+  /** Khina answered a visitor's note. */
+  reply(r: NoteReply): void;
   setMode(m: Mode): void;
   setSource(src: PieceSource): void;
+  setNotesSource(src: NotesSource): void;
   show(): void;
 }
 
 // ---------- small helpers ----------
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+/** "Ana", "Ana and Mo", "Ana, Mo and a visitor" (each name once). */
+function both(names: string[]): string {
+  const n = [...new Set(names)];
+  return n.length > 1 ? `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}` : (n[0] ?? '');
+}
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -196,6 +316,7 @@ const ICONS: Record<string, string> = {
   song: P('<path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>'),
   toy: P('<rect x="2.5" y="7" width="19" height="11" rx="5"/><path d="M7 11v3M5.5 12.5h3"/><circle cx="16" cy="11.5" r="1"/><circle cx="18" cy="13.5" r="1"/>'),
   words: P('<path d="M6 4h12v16H6z"/><path d="M9 8h6M9 12h6M9 16h4"/>'),
+  notes: P('<rect x="3" y="5.5" width="18" height="13" rx="2"/><path d="M3.5 7l8.5 6.2L20.5 7"/>'),
 };
 function iconEl(name: string, cls = ''): HTMLElement {
   const i = el('i', cls);
@@ -245,7 +366,7 @@ function describe(a: HudActivity | null): { title: string; status: string; chip:
         : a.actionId === 'post'
           ? `Writing a post about ${detail || 'the day'}`
           : capital(a.doing) + (detail ? ` (${detail})` : '');
-  const chip = own ? 'own idea' : a.actionId === 'make' ? 'making' : a.actionId === 'browse' || a.actionId === 'post' ? 'online' : '';
+  const chip = own ? 'own idea' : a.actionId === 'make' ? 'making' : ['browse', 'post', 'notes'].includes(a.actionId) ? 'online' : '';
   if (a.kind === 'walk') {
     const to = placeShort(a.place);
     const purpose = own
@@ -498,6 +619,25 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     toastTimer = window.setTimeout(() => (toast.hidden = true), 9000);
   }
 
+  /** Answers to visitors' notes that came in together, toasted as one. */
+  const answered: NoteReply[] = [];
+  let answeredTimer = 0;
+  function answeredToast() {
+    const batch = answered.splice(0);
+    if (!batch.length) return;
+    const mineIds = new Set(notesSrc.kept().map((n) => n.id));
+    const yours = batch.some((r) => mineIds.has(r.id));
+    const others = batch.filter((r) => !mineIds.has(r.id)).map((r) => r.name);
+    const text = yours
+      ? others.length
+        ? `Khina answered your note, and ${others.length === 1 ? `one from ${others[0]}` : `${others.length} more`}`
+        : 'Khina answered your note'
+      : batch.length === 1
+        ? `Khina answered a note from ${batch[0]!.name}`
+        : `Khina answered ${batch.length} notes (${both(batch.map((r) => r.name))})`;
+    showToast(text, 'read', () => openSheet('notes', { tab: yours ? 'mine' : 'answers' }));
+  }
+
   // Feed.
   const feed = $('feed');
   const seen = new Set<string>();
@@ -521,7 +661,7 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
   }
 
   // ---------- sheets ----------
-  type SheetKind = 'diary' | 'gallery' | 'internet' | 'asks';
+  type SheetKind = 'diary' | 'gallery' | 'internet' | 'asks' | 'notes';
   const sheet = $('sheet');
   const scrim = $('scrim');
   const body = $('sheetBody');
@@ -547,8 +687,10 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     internet: [['looked', 'looked up'], ['posts', 'posts']],
     // "waiting" like the chip on each card; renderAsks adds the counts.
     asks: [['open', 'waiting'], ['answered', 'answered']],
+    // One page: the form, then your notes, then her answers (what a visitor came for, in that order).
+    notes: [],
   };
-  const TITLES: Record<SheetKind, string> = { diary: 'Diary', gallery: 'Things Khina made', internet: 'Khina on the internet', asks: 'Khina asks' };
+  const TITLES: Record<SheetKind, string> = { diary: 'Diary', gallery: 'Things Khina made', internet: 'Khina on the internet', asks: 'Khina asks', notes: 'Notes for Khina' };
 
   function openSheet(kind: SheetKind, opts: { piece?: string; tab?: string } = {}) {
     stopSong?.();
@@ -575,13 +717,20 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
       }),
     );
     if (kind === 'gallery') galleryList = null;
+    if (kind === 'notes') {
+      notesBoxes = null;
+      void refreshMine();
+    }
     renderSheet(true);
     body.scrollTop = 0;
+    if (kind === 'notes' && opts.tab === 'answers') notesBoxes?.answers.scrollIntoView({ block: 'start' });
+    if (kind === 'notes' && opts.tab === 'mine') notesBoxes?.mine.scrollIntoView({ block: 'start' });
   }
   function closeSheet() {
     stopSong?.();
     open = null;
     notice = null;
+    notesNotice = null;
     keyBox = false;
     sheet.hidden = true;
     scrim.hidden = true;
@@ -601,6 +750,7 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     if (open === 'diary') renderDiary(snap);
     else if (open === 'internet') renderInternet(snap);
     else if (open === 'asks') renderAsks(snap, force);
+    else if (open === 'notes') renderNotes(snap, force);
     else if (force || !viewing) void renderGallery(snap, force);
   }
 
@@ -707,6 +857,13 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     for (const a of list) out.push(askCard(a));
     if (keeperKey) {
       const line = el('div', 'keeperline', 'keeper · ');
+      const notesLink = el('a', '', 'unread visitor notes');
+      notesLink.href = '#';
+      notesLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        openSheet('notes');
+        if (keeperKey && !keeperOff && !inbox) void loadInbox();
+      });
       const forget = el('a', '', 'forget key');
       forget.href = '#';
       forget.addEventListener('click', (e) => {
@@ -715,7 +872,7 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
         notice = null;
         renderAsks(snap!, true);
       });
-      line.append(forget);
+      line.append(notesLink, ' · ', forget);
       out.push(line);
     }
     body.replaceChildren(...out);
@@ -817,6 +974,431 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     if (open === 'asks' && snap) renderAsks(snap, true);
   }
 
+  // ---------- visitor notes ----------
+  let notesSrc: NotesSource = httpNotes;
+  /** The newest answer this browser has seen (real ms), for the badge. NaN until a first visit's first snapshot. */
+  const NOTES_SEEN = 'khina.notesSeen';
+  let notesSeen = Number(storeGet(NOTES_SEEN) ?? Number.NaN);
+  const notesBadge = el('b', 'badge');
+  notesBadge.hidden = true;
+  document.querySelector('#menu [data-sheet="notes"] .round')?.append(notesBadge);
+  /** How this browser's own notes are doing, from /notes/mine. */
+  const mine = new Map<string, MineStatus>();
+  let notesNotice: { text: string; good?: boolean } | null = null;
+  let noteSending = false;
+  /** Unread notes, for the Keeper only, loaded when asked for (null: not loaded). */
+  let inbox: InboxNote[] | null = null;
+  /** Her answers the Keeper took off the site, so one can be put back. */
+  let hiddenAnswers: NoteReply[] = [];
+  let inboxLoading = false;
+  const hiding = new Set<string>();
+  /** Thrown away or taken off on the page, sent only after UNDO_MS so a slip of the finger can be undone. */
+  const pendingHide = new Map<string, { what: 'note' | 'reply'; timer: number }>();
+  /** Why hiding one did not work, shown on that entry. */
+  const hideTrouble = new Map<string, string>();
+  const UNDO_MS = 5000;
+  /** The Keeper's box sits above the form while the key is in use; otherwise below everything. */
+  let keeperFirst = false;
+  /** The form is made once and kept, so a half-written note survives closing the sheet and every update. */
+  let notesForm: { root: HTMLFormElement; name: HTMLInputElement; text: HTMLTextAreaElement; website: HTMLInputElement; count: HTMLElement; send: HTMLButtonElement } | null = null;
+  let notesBoxes: { waiting: HTMLElement; notice: HTMLElement; mine: HTMLElement; answers: HTMLElement; keeper: HTMLElement; hidden: HTMLElement } | null = null;
+  let notesKey = '';
+  const TEXT_MAX = 280;
+
+  const newestReply = (s: HudSnap) => Math.max(0, ...(s.replies ?? []).map((r) => r.at));
+  const freshReplies = (s: HudSnap) => (s.replies ?? []).filter((r) => r.at > notesSeen).length;
+  function seeReplies(s: HudSnap) {
+    const newest = newestReply(s);
+    // A first visit starts with everything already there counted as seen: the badge is for what comes next.
+    if (Number.isNaN(notesSeen) || newest > notesSeen) {
+      notesSeen = newest;
+      storeSet(NOTES_SEEN, String(newest));
+    }
+  }
+
+  function noteForm() {
+    if (notesForm) return notesForm;
+    const root = el('form', 'noteform');
+    root.noValidate = true;
+    const name = el('input');
+    name.type = 'text';
+    name.maxLength = 24;
+    name.autocomplete = 'given-name';
+    name.placeholder = 'Your name (you can leave this empty)';
+    name.setAttribute('aria-label', 'Your name, if you like');
+    const text = el('textarea');
+    text.maxLength = TEXT_MAX;
+    text.rows = 3;
+    text.placeholder = 'Say hello, tell her about your day, or suggest something she could do';
+    text.setAttribute('aria-label', 'Your note to Khina');
+    // A box people never see: only bots fill it in, and then the server keeps nothing.
+    const trap = el('div', 'trap');
+    trap.setAttribute('aria-hidden', 'true');
+    const website = el('input');
+    website.type = 'text';
+    website.name = 'website';
+    website.tabIndex = -1;
+    website.autocomplete = 'off';
+    trap.append(website);
+    const row = el('div', 'noterow');
+    const count = el('span', 'count', `0 / ${TEXT_MAX}`);
+    const send = el('button', 'kbtn done', 'Send');
+    send.type = 'submit';
+    row.append(count, send);
+    text.addEventListener('input', () => {
+      count.textContent = `${text.value.length} / ${TEXT_MAX}`;
+      count.classList.toggle('near', text.value.length > TEXT_MAX - 30);
+    });
+    root.append(
+      el('h3', '', 'Leave Khina a note'),
+      name,
+      text,
+      trap,
+      row,
+      el('p', 'small', 'Khina reads her notes a few times a day at the internet hut. If she answers, the note and her answer show here for everyone. The Keeper, who looks after her, can read notes too.'),
+    );
+    root.addEventListener('submit', (e) => {
+      e.preventDefault();
+      void sendNote();
+    });
+    notesForm = { root, name, text, website, count, send };
+    return notesForm;
+  }
+
+  async function sendNote() {
+    const f = noteForm();
+    const text = f.text.value.trim();
+    if (noteSending) return;
+    if (!text) {
+      notesNotice = { text: 'Write Khina a few words first.' };
+      if (snap) renderNotes(snap, true);
+      return;
+    }
+    noteSending = true;
+    f.send.disabled = true;
+    f.send.textContent = 'Sending…';
+    const name = f.name.value.trim();
+    const r = await notesSrc.send({ name, text, website: f.website.value });
+    noteSending = false;
+    f.send.disabled = false;
+    f.send.textContent = 'Send';
+    if (r?.status === 200 && r.id) {
+      // The name as the site will show it, if the server changed it ("a visitor").
+      notesSrc.keep({ id: r.id, name: r.name ?? (name || 'a visitor'), text, at: Date.now() });
+      mine.set(r.id, { id: r.id, status: 'waiting' });
+      f.text.value = '';
+      f.count.textContent = `0 / ${TEXT_MAX}`;
+      f.count.classList.remove('near');
+      notesNotice = { text: 'Sent. It is waiting for her at the internet hut.', good: true };
+    } else {
+      notesNotice = { text: r?.error ?? 'Could not send that. Try again in a moment.' };
+    }
+    if (open === 'notes' && snap) renderNotes(snap, true);
+  }
+
+  /** Asks the server how this browser's notes are doing (it knows ids, never who sent what). */
+  async function refreshMine() {
+    const ids = notesSrc.kept().map((n) => n.id);
+    if (!ids.length) return;
+    const got = await notesSrc.mine(ids);
+    for (const m of got ?? []) mine.set(m.id, m);
+    if (open === 'notes' && snap) renderNotes(snap, true);
+  }
+
+  /** A refused key, in the notes' own words (keyRefused speaks for the asks sheet). */
+  function keeperTrouble(r: Response | null, off: boolean, fallback: string) {
+    if (r && keyRefused(r.status, off)) {
+      notesNotice = { text: r.status === 403 && !off ? "That key didn't work. Open the site with #keeper to type it again." : (notice?.text ?? fallback) };
+      notice = null;
+      keyBox = false;
+    } else {
+      notesNotice = { text: r?.status === 404 ? 'That one is gone already.' : fallback };
+    }
+  }
+
+  async function loadInbox() {
+    if (!keeperKey || inboxLoading) return;
+    inboxLoading = true;
+    if (open === 'notes' && snap) renderNotes(snap, true);
+    let r: Response | null = null;
+    try {
+      r = await fetch('/notes/inbox', { headers: { 'x-keeper-key': keeperKey } });
+    } catch {
+      r = null;
+    }
+    inboxLoading = false;
+    const j = r ? ((await r.json().catch(() => null)) as { notes?: InboxNote[]; hidden?: NoteReply[]; off?: boolean } | null) : null;
+    if (r?.ok && Array.isArray(j?.notes)) {
+      inbox = j.notes;
+      hiddenAnswers = Array.isArray(j.hidden) ? j.hidden : [];
+    } else keeperTrouble(r, !!j?.off, 'Could not load the unread notes. Try again.');
+    if (open === 'notes' && snap) renderNotes(snap, true);
+  }
+
+  const rerenderNotes = () => open === 'notes' && snap && renderNotes(snap, true);
+
+  /** The Keeper throws an unread note away, or takes one of her answers off the site: on the page at once, sent after UNDO_MS. */
+  function hideSoon(id: string, what: 'note' | 'reply') {
+    if (!keeperKey || hiding.has(id) || pendingHide.has(id)) return;
+    hideTrouble.delete(id);
+    pendingHide.set(id, { what, timer: window.setTimeout(() => void hideNote(id, what), UNDO_MS) });
+    rerenderNotes();
+  }
+
+  function undoHide(id: string) {
+    const p = pendingHide.get(id);
+    if (!p) return;
+    clearTimeout(p.timer);
+    pendingHide.delete(id);
+    rerenderNotes();
+  }
+
+  async function hideNote(id: string, what: 'note' | 'reply') {
+    pendingHide.delete(id);
+    if (!keeperKey) return rerenderNotes();
+    // Kept now: the server's next snapshot may drop it before this answer comes back.
+    const answer = snap?.replies?.find((x) => x.id === id);
+    hiding.add(id);
+    rerenderNotes();
+    let r: Response | null = null;
+    try {
+      r = await fetch(`/notes/${encodeURIComponent(id)}/hide`, { method: 'POST', headers: { 'x-keeper-key': keeperKey } });
+    } catch {
+      r = null;
+    }
+    hiding.delete(id);
+    const j = r ? ((await r.json().catch(() => null)) as { off?: boolean } | null) : null;
+    if (r?.ok) {
+      if (inbox) inbox = inbox.filter((n) => n.id !== id);
+      // Gone now; the server's next snapshot says the same.
+      if (answer && !hiddenAnswers.some((x) => x.id === id)) hiddenAnswers = [answer, ...hiddenAnswers];
+      if (snap?.replies) snap = { ...snap, replies: snap.replies.filter((x) => x.id !== id) };
+    } else if (r?.status === 404 && what === 'note') {
+      if (inbox) inbox = inbox.filter((n) => n.id !== id);
+    } else {
+      const before = notesNotice;
+      keeperTrouble(r, !!j?.off, 'Could not do that. Try again.');
+      // The reason goes on the entry itself, where the Keeper is looking.
+      if (notesNotice !== before && notesNotice) hideTrouble.set(id, notesNotice.text);
+      notesNotice = before;
+    }
+    rerenderNotes();
+  }
+
+  /** The Keeper puts one of her answers back on the site. */
+  async function showAnswer(id: string) {
+    if (!keeperKey || hiding.has(id)) return;
+    hiding.add(id);
+    rerenderNotes();
+    let r: Response | null = null;
+    try {
+      r = await fetch(`/notes/${encodeURIComponent(id)}/show`, { method: 'POST', headers: { 'x-keeper-key': keeperKey } });
+    } catch {
+      r = null;
+    }
+    hiding.delete(id);
+    const j = r ? ((await r.json().catch(() => null)) as { off?: boolean } | null) : null;
+    if (r?.ok) hiddenAnswers = hiddenAnswers.filter((x) => x.id !== id);
+    else keeperTrouble(r, !!j?.off, 'Could not put that back. Try again.');
+    rerenderNotes();
+  }
+
+  /** A flood of junk: every unread note on the page goes at once (after a confirm), none that came in since. */
+  async function clearShown() {
+    if (!keeperKey || !inbox?.length) return;
+    const shown = inbox.filter((n) => !pendingHide.has(n.id));
+    if (!shown.length) return;
+    if (!confirm(`Throw away all ${shown.length} unread note${shown.length === 1 ? '' : 's'} shown here? Khina will never see them, and this can't be undone.`)) return;
+    const upto = Math.max(...shown.map((n) => n.at));
+    inboxLoading = true;
+    rerenderNotes();
+    let r: Response | null = null;
+    try {
+      r = await fetch(`/notes/inbox/clear?upto=${upto}`, { method: 'POST', headers: { 'x-keeper-key': keeperKey } });
+    } catch {
+      r = null;
+    }
+    inboxLoading = false;
+    const j = r ? ((await r.json().catch(() => null)) as { cleared?: number; off?: boolean } | null) : null;
+    if (r?.ok) {
+      inbox = inbox.filter((n) => n.at > upto);
+      notesNotice = { text: `Threw away ${j?.cleared ?? shown.length} unread note${j?.cleared === 1 ? '' : 's'}.`, good: true };
+    } else keeperTrouble(r, !!j?.off, 'Could not throw those away. Try again.');
+    rerenderNotes();
+  }
+
+  const MINE_CHIP: Record<MineStatus['status'], [string, string]> = {
+    waiting: ['waiting', 'chip orange'],
+    read: ['read', 'chip'],
+    answered: ['answered', 'chip moss'],
+    gone: ['not kept', 'chip rose'],
+  };
+  const MINE_SAY: Record<MineStatus['status'], string> = {
+    // The chip already says it.
+    waiting: '',
+    read: 'Khina read it.',
+    answered: '',
+    gone: 'This note is not there any more.',
+  };
+
+  function renderNotes(s: HudSnap, force: boolean) {
+    const f = noteForm();
+    // The form stays put (moving it would drop the cursor of someone typing); only the parts around it change.
+    const showKeeper = !!keeperKey && !keeperOff;
+    // In keeper mode the unread inbox comes first (the Keeper is here to look after it), above the form.
+    if (!notesBoxes || !body.contains(f.root) || keeperFirst !== showKeeper) {
+      notesBoxes ??= { waiting: el('p', 'intro waitline'), notice: el('div', 'notesnotice'), mine: el('section', 'notesec'), answers: el('section', 'notesec'), keeper: el('section', 'notesec keeperbox'), hidden: el('section', 'notesec') };
+      const b = notesBoxes;
+      keeperFirst = showKeeper;
+      body.replaceChildren(...(showKeeper ? [b.notice, b.keeper, f.root, b.waiting, b.mine, b.answers, b.hidden] : [b.notice, f.root, b.waiting, b.mine, b.answers, b.keeper, b.hidden]));
+      b.keeper.hidden = !showKeeper;
+      force = true;
+    }
+    seeReplies(s);
+    badges(s);
+    const replies = s.replies ?? [];
+    const kept = notesSrc.kept();
+    const key = JSON.stringify([s.unreadCount, notesNotice, replies.map((r) => r.id), kept.map((n) => [n.id, mine.get(n.id)?.status]), showKeeper, inbox?.map((n) => n.id), hiddenAnswers.map((x) => x.id), inboxLoading, [...hiding], [...pendingHide.keys()], [...hideTrouble]]);
+    if (!force && key === notesKey) return;
+    notesKey = key;
+    const b = notesBoxes;
+
+    b.notice.replaceChildren(...(notesNotice ? [el('div', notesNotice.good ? 'notice good' : 'notice', notesNotice.text)] : []));
+    const n = s.unreadCount ?? 0;
+    b.waiting.textContent = n ? `${n} note${n === 1 ? ' is' : 's are'} waiting for her at the internet hut right now.` : 'No notes are waiting for her right now.';
+
+    // This browser's own notes (kept here only: the site never shows a note before she answers it).
+    b.mine.replaceChildren();
+    if (kept.length) {
+      b.mine.append(el('h3', 'dayhead', 'Your notes'), el('p', 'intro', 'Only this browser keeps this list. Until Khina answers, only she and the Keeper, who looks after her, can read a note.'));
+      for (const k of kept) {
+        const m = mine.get(k.id);
+        const [word, cls] = m ? MINE_CHIP[m.status] : ['sent', 'chip'];
+        const e = el('div', 'entry note');
+        const top = el('div', 'top');
+        top.append(el('span', cls, word));
+        if (k.name && k.name !== 'a visitor') top.append(el('span', 'as', `as ${k.name}`));
+        top.append(el('span', 't', agoReal(k.at)));
+        e.append(top, el('p', 'quote', k.text));
+        if (m?.status === 'answered' && m.reply) e.append(answerBox(m.reply));
+        else if (m && MINE_SAY[m.status]) e.append(el('p', 'say', MINE_SAY[m.status]));
+        b.mine.append(e);
+      }
+    }
+
+    b.answers.replaceChildren(el('h3', 'dayhead', "Khina's answers"));
+    if (!replies.length) b.answers.append(el('div', 'empty', 'No answers yet. Now and then a note makes Khina want to write back.'));
+    for (const r of replies) b.answers.append(replyCard(r, showKeeper));
+
+    b.keeper.replaceChildren();
+    b.hidden.replaceChildren();
+    if (showKeeper) {
+      b.keeper.append(el('h3', 'dayhead', 'Unread notes · only the Keeper sees these'));
+      if (!inbox || inboxLoading) {
+        const go = el('button', 'kbtn', inboxLoading ? 'Loading…' : 'Show the unread notes');
+        go.type = 'button';
+        go.disabled = inboxLoading;
+        go.addEventListener('click', () => void loadInbox());
+        b.keeper.append(go);
+      } else {
+        const tools = el('div', 'kbtns');
+        const again = el('button', 'kbtn', 'Look again');
+        again.type = 'button';
+        again.addEventListener('click', () => void loadInbox());
+        tools.append(again);
+        if (inbox.length > 1) {
+          const all = el('button', 'kbtn no', `Throw away all ${inbox.length} shown`);
+          all.type = 'button';
+          all.addEventListener('click', () => void clearShown());
+          tools.append(all);
+        }
+        if (!inbox.length) b.keeper.append(el('div', 'empty', 'No unread notes.'));
+        b.keeper.append(tools);
+        for (const x of inbox) {
+          const e = el('div', 'entry note');
+          const top = el('div', 'top');
+          top.append(el('b', 'who', x.name), el('span', 't', `Khina's day ${x.day ?? '?'} · ${x.clock ?? ''} · ${agoReal(x.at)}`));
+          if (pendingHide.has(x.id)) e.append(top, undoRow(x.id, 'Thrown away. Khina will never see it.'));
+          else e.append(top, el('p', '', x.text), hideButton(x.id, 'note', 'Throw away'));
+          b.keeper.append(e);
+        }
+      }
+      if (hiddenAnswers.length) {
+        b.hidden.append(el('h3', 'dayhead', 'Taken off the site · only the Keeper sees these'));
+        for (const r of hiddenAnswers) {
+          const e = el('div', 'entry reply');
+          const top = el('div', 'top');
+          top.append(el('span', 'chip rose', 'off the site'), el('b', 'who', `from ${r.name}`));
+          const row = el('div', 'kbtns');
+          const back = el('button', 'kbtn', hiding.has(r.id) ? 'Putting back…' : 'Put back on the site');
+          back.type = 'button';
+          back.disabled = hiding.has(r.id);
+          back.addEventListener('click', () => void showAnswer(r.id));
+          row.append(back);
+          e.append(top, el('p', 'quote', r.note), answerBox(r), row);
+          b.hidden.append(e);
+        }
+      }
+    }
+  }
+
+  /** What a tap on "Throw away" or "Take off the site" did, with a way back for a few seconds. */
+  function undoRow(id: string, said: string): HTMLElement {
+    const row = el('div', 'kbtns undo');
+    const undo = el('button', 'kbtn', 'Undo');
+    undo.type = 'button';
+    undo.addEventListener('click', () => undoHide(id));
+    row.append(el('span', 'said', said), undo);
+    return row;
+  }
+
+  function answerBox(r: NoteReply): HTMLElement {
+    const ans = el('div', 'answer');
+    const head = el('div', 'ah');
+    head.append(el('b', '', 'Khina wrote back'), el('span', '', `Khina's day ${r.day ?? '?'} · ${agoReal(r.at)}`));
+    ans.append(head, el('p', '', r.reply));
+    return ans;
+  }
+
+  function replyCard(r: NoteReply, keeper: boolean): HTMLElement {
+    const e = el('div', 'entry reply');
+    const top = el('div', 'top');
+    top.append(el('span', 'chip moss', 'answered'), el('b', 'who', `from ${r.name}`));
+    if (keeper && pendingHide.has(r.id)) {
+      e.append(top, undoRow(r.id, 'Taken off the site.'));
+      return e;
+    }
+    e.append(top, el('p', 'quote', r.note), answerBox(r));
+    if (keeper) e.append(hideButton(r.id, 'reply', 'Take off the site'));
+    return e;
+  }
+
+  function hideButton(id: string, what: 'note' | 'reply', label: string): HTMLElement {
+    const row = el('div', 'kbtns');
+    const b = el('button', 'kbtn no', hiding.has(id) ? (what === 'note' ? 'Throwing away…' : 'Taking off…') : label);
+    b.type = 'button';
+    b.disabled = hiding.has(id);
+    b.addEventListener('click', () => hideSoon(id, what));
+    row.append(b);
+    const trouble = hideTrouble.get(id);
+    if (trouble) row.append(el('span', 'said bad', trouble));
+    return row;
+  }
+
+  /** Asks waiting for the Keeper, and answers this browser has not seen yet. */
+  function badges(s: HudSnap) {
+    const waiting = (s.asks ?? []).filter((a) => a.status === 'open').length;
+    const fresh = Number.isNaN(notesSeen) ? 0 : freshReplies(s);
+    asksBadge.textContent = String(waiting);
+    asksBadge.hidden = waiting === 0;
+    notesBadge.textContent = String(fresh);
+    notesBadge.hidden = fresh === 0;
+    menuBadge.textContent = String(waiting + fresh);
+    menuBadge.hidden = waiting + fresh === 0;
+    const say = [waiting ? `Khina is waiting on ${waiting} ask${waiting === 1 ? '' : 's'}` : '', fresh ? `${fresh} new answer${fresh === 1 ? '' : 's'} to visitors' notes` : ''].filter(Boolean);
+    menuBtn.title = say.length ? `Menu · ${say.join(' · ')}` : 'Menu';
+  }
+
   function moodArc(s: HudSnap): HTMLElement | null {
     const pts = s.moodArc ?? [];
     if (pts.length < 2) return null;
@@ -849,6 +1431,7 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     if (id === 'make' || id === 'draw') return el('span', 'chip orange', 'made something');
     if (id === 'browse') return el('span', 'chip moss', 'online');
     if (id === 'post') return el('span', 'chip moss', 'posted');
+    if (id === 'notes') return el('span', 'chip moss', 'read notes');
     if (id.startsWith('own.')) return el('span', 'chip moss', 'own idea');
     return null;
   }
@@ -1101,6 +1684,8 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     if (p) openSheet('gallery', { piece: p.id });
   });
   lastRead.addEventListener('click', () => openSheet('internet'));
+  const notesRow = $('notesRow');
+  notesRow.addEventListener('click', () => openSheet('notes'));
 
   // A shared link like /#piece=<id> opens that piece once the first snapshot is in.
   let linkedPiece = /^#piece=([a-z0-9]+-[a-z0-9]+)$/.exec(location.hash)?.[1] ?? null;
@@ -1116,12 +1701,8 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
       asksOnStart = false;
       openSheet('asks');
     }
-    const waiting = (s.asks ?? []).filter((a) => a.status === 'open').length;
-    for (const b of [menuBadge, asksBadge]) {
-      b.textContent = String(waiting);
-      b.hidden = waiting === 0;
-    }
-    menuBtn.title = waiting ? `Menu · Khina is waiting on ${waiting} ask${waiting === 1 ? '' : 's'}` : 'Menu';
+    if (Number.isNaN(notesSeen)) seeReplies(s);
+    badges(s);
     for (const [key] of NEEDS) {
       const v = key === 'mood' ? s.mood : (s.needs[key] ?? 0);
       const n = needBars.get(key)!;
@@ -1137,6 +1718,14 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
       doing.append(' ');
       doing.append(el('span', d.chip === 'making' ? 'chip orange' : 'chip moss', d.chip));
     }
+    // A visitor's note gave her the idea: whose it was, whatever her reason says.
+    const by = s.activity?.nudgedBy;
+    if (by !== undefined) {
+      doing.append(' ');
+      const idea = el('span', 'chip idea', by === 'a visitor' ? "a visitor's idea" : `${by}'s idea`);
+      idea.title = 'A visitor suggested this in a note';
+      doing.append(idea);
+    }
     $('why').textContent = s.activity?.reason ? `“${s.activity.reason}”` : '';
     const lp = s.pieces?.[s.pieces.length - 1];
     lastMade.hidden = !lp;
@@ -1147,6 +1736,15 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     const lr = s.readings?.[s.readings.length - 1];
     lastRead.hidden = !lr;
     if (lr) lastRead.replaceChildren(el('span', 'k', 'last looked up'), el('b', '', lr.question), ` · ${ago(s.t, lr.t)}`);
+    // Visitors' notes: how many wait at the hut (a count only), or an invitation to leave one.
+    const unread = s.unreadCount;
+    notesRow.hidden = unread === undefined;
+    // While she reads, the notes in her paws no longer count as waiting: say what she is doing with them.
+    const reading = s.activity?.actionId === 'notes' && s.activity.kind === 'act';
+    const inPaws = Number.parseInt(s.activity?.detail ?? '', 10);
+    if (reading) notesRow.replaceChildren(el('span', 'k', 'visitor notes'), el('b', '', inPaws > 0 ? `reading ${inPaws} note${inPaws === 1 ? '' : 's'} right now` : 'reading notes right now'), unread ? ` · ${unread} more waiting` : '');
+    else if (unread) notesRow.replaceChildren(el('span', 'k', 'visitor notes'), el('b', '', `${unread} note${unread === 1 ? '' : 's'} waiting`), ' at the internet hut');
+    else if (unread === 0) notesRow.replaceChildren(el('span', 'k', 'visitor notes'), el('b', '', 'Leave Khina a note'));
     $('brain').textContent = `Brain: ${s.brain} · ${paceText(s.speed)}`;
     $('clockIcon').innerHTML = s.dark ? ICONS.moon! : ICONS.sun!;
     $('clockText').replaceChildren(el('small', '', "Khina's time"), el('span', '', `${s.weekday.slice(0, 3)} ${s.clock} · ${WEATHER_WORD[s.weather] ?? s.weather}`));
@@ -1154,7 +1752,7 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     const st = $('statusText');
     st.replaceChildren(el('b', '', 'Khina'), ` is ${d.status}`);
     renderFeed(s);
-    if (open === 'diary' || open === 'internet' || open === 'asks') renderSheet();
+    if (open === 'diary' || open === 'internet' || open === 'asks' || open === 'notes') renderSheet();
     else if (open === 'gallery' && !viewing) void renderGallery(s, false);
   }
 
@@ -1175,6 +1773,20 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
     ask() {
       showToast('Khina asked the Keeper for something', 'read', () => openSheet('asks'));
     },
+    reply(r) {
+      // One sitting can bring two answers a moment apart: one toast for them, not one hiding the other.
+      answered.push(r);
+      clearTimeout(answeredTimer);
+      answeredTimer = window.setTimeout(answeredToast, 1200);
+      // The badge and an open sheet show it now; the server's next snapshot says the same.
+      if (snap && !(snap.replies ?? []).some((x) => x.id === r.id)) {
+        snap = { ...snap, replies: [r, ...(snap.replies ?? [])] };
+        badges(snap);
+        if (open === 'notes') renderNotes(snap, false);
+      }
+      // One of this browser's own notes: its status changes too.
+      if (notesSrc.kept().some((n) => n.id === r.id)) void refreshMine();
+    },
     setMode(m) {
       mode = m;
       followBtn.setAttribute('aria-pressed', String(m === 'khina'));
@@ -1187,6 +1799,10 @@ export function createHud(o: { canWalk: boolean; onMode: (m: Mode) => void }): H
       source = src;
       full.clear();
       galleryList = null;
+    },
+    setNotesSource(src) {
+      notesSrc = src;
+      mine.clear();
     },
     show() {
       $('hud').hidden = false;

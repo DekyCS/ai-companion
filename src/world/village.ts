@@ -170,8 +170,9 @@ export interface WorldState {
    * What is possible beyond the fixed village life, set by the sim before each choice: real pieces
    * (a store to keep them), Khina's own ideas (needs the model), the internet (model plus budget).
    * Absent or all false in experiments, so they never change what experiments measure.
+   * notes: reading visitors' notes (model up, and today's notes budget and reads not used up).
    */
-  can?: { make: boolean; own: boolean; net: boolean; post?: boolean };
+  can?: { make: boolean; own: boolean; net: boolean; post?: boolean; notes?: boolean };
 }
 
 const FIND_COLOURS = ['red', 'blue', 'green', 'white', 'yellow', 'black', 'chipped', 'tiny', 'odd-shaped'];

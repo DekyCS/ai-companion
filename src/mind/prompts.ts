@@ -82,8 +82,9 @@ const VILLAGE = `The village: Bramwell the badger (he) runs the bakery. Old Wren
 export function characterSheet(s?: State): string {
   const learned = s?.learned ?? [];
   const extra = learned.length ? `\n\nLearned about herself over time:\n${learned.map((l) => `- ${l.text}`).join('\n')}` : '';
-  const hut = s?.world.can?.net || s?.world.can?.post
-    ? ` Down the lane there is an internet hut, where an old computer on the porch can ${[s.world.can.net ? 'look up anything Khina wonders about' : '', s.world.can.post ? 'post a short note for strangers to read' : ''].filter(Boolean).join(' or ')}.`
+  const can = s?.world.can;
+  const hut = can?.net || can?.post || can?.notes
+    ? ` Down the lane there is an internet hut, where an old computer on the porch can ${[can.net ? 'look up anything Khina wonders about' : '', can.post ? 'post a short note for strangers to read' : '', can.notes ? 'show the notes visitors from far away leave for her' : ''].filter(Boolean).join(' or ')}.`
     : '';
   return `${CHARACTER_BASE}${extra}\n\n${VILLAGE}${hut}`;
 }

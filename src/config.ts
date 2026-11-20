@@ -56,6 +56,13 @@ export const mind = {
   costWeight: 0.5,
   /** Must-do states: only actions that fix the need are allowed. */
   tiers: { exhaustedBelow: 12, starvingBelow: 10 },
+  /**
+   * A visitor's note gave her the idea (live server only, src/notes.ts): that action's score is
+   * multiplied by this while the thought lasts, and it stays on her menu (src/mind/decide.ts). A pull,
+   * not an order: the body still weighs it. (1.8 moved too little: a nudged bench went from 1% of next
+   * choices to 7%; at 2.5 it is about 15%.)
+   */
+  nudgeMult: 2.5,
 };
 
 /** Switchable systems, so each can be measured one change at a time (see `npm run long -- --exp`). */
@@ -213,11 +220,13 @@ export const models = {
   make: 'claude-sonnet-5-5',
   web: 'claude-sonnet-5-5',
   post: 'claude-haiku-5-5',
+  // Reading a batch of visitors' notes: one small call, a diary line, at most 2 answers and one idea.
+  notes: 'claude-haiku-5-5',
   // The night page. At a fast clock (24 pages a real day) the live server sets KHINA_NIGHT_MODEL to Sonnet.
   sleep: (process.env.KHINA_NIGHT_MODEL ?? 'claude-opus-5-5') as 'claude-opus-5-5' | 'claude-sonnet-5-5' | 'claude-haiku-5-5',
 } as const;
 
-export const effort = { decide: 'low', diary: 'low', make: 'medium', web: 'low', post: 'low', sleep: 'medium' } as const;
+export const effort = { decide: 'low', diary: 'low', make: 'medium', web: 'low', post: 'low', notes: 'low', sleep: 'medium' } as const;
 
 /** Most posts Khina may write per real day (each is one small Haiku call; sending is free on Bluesky, about $0.015 on X). */
 export const postsPerDay = Number(process.env.KHINA_POSTS_PER_DAY ?? 3) || 3;
@@ -244,6 +253,11 @@ export const budget = {
    * used up, Khina's making turns back into words only and the internet hut's computer stays off.
    */
   extrasUsd: Number(process.env.KHINA_EXTRAS_CAP_USD ?? 0.3) || 0.3,
+  /**
+   * Of the daily cap, the most that reading visitors' notes may take per real day (one small Haiku
+   * call a sitting), let out through the day like the extras. Reads are also capped by count (src/notes.ts).
+   */
+  notesUsd: Number(process.env.KHINA_NOTES_CAP_USD ?? 0.25) || 0.25,
 };
 
 /** Where the real-money spend ledger lives (shared by all runs). */

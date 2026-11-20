@@ -62,7 +62,8 @@ export function dayLog(records: Completed[]): string {
     .join('\n');
 }
 
-const BANNED = /\b(cozy|cosy|adventure|journey|magical|delightful|whimsical)\b/i;
+/** Words her pages never use (and her answers to visitors' notes neither: src/notes.ts safeLine). */
+export const BANNED = /\b(cozy|cosy|adventure|journey|magical|delightful|whimsical)\b/i;
 
 function cleanLine(text: string, maxWords: number): string {
   const t = text.replace(/\s+/g, ' ').replace(/!/g, '.').trim();

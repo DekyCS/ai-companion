@@ -32,9 +32,9 @@ export function applyEffects(s: State, e: Effects): void {
   for (const n of NEEDS) if (e[n]) s.needs[n] = clamp(s.needs[n] + (e[n] as number));
 }
 
-export function addThought(s: State, th: { key: string; text: string; value: number; hours: number }): void {
+export function addThought(s: State, th: { key: string; text: string; value: number; hours: number; who?: string }): void {
   s.thoughts = s.thoughts.filter((x) => x.key !== th.key);
-  s.thoughts.push({ key: th.key, text: th.text, value: th.value, at: s.t, until: s.t + Math.round(th.hours * 60) });
+  s.thoughts.push({ key: th.key, text: th.text, value: th.value, at: s.t, until: s.t + Math.round(th.hours * 60), ...(th.who ? { who: th.who } : {}) });
 }
 
 // What a need past the line sounds like in Khina's head, from mild to bad.

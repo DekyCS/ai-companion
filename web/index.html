@@ -171,6 +171,41 @@
       .keeperline { margin-top: 18px; font-size: 12px; color: var(--soft); text-align: center; }
       .keeperline a { color: var(--ink); font-weight: 700; }
 
+      /* Visitor notes */
+      .noteform { display: grid; gap: 8px; max-width: 600px; background: #fbf5e8; border: 2px solid var(--line); border-radius: 16px; padding: 12px 14px 10px; margin-top: 4px; }
+      .noteform h3 { margin: 0; font-size: 17px; font-weight: 800; }
+      .noteform input, .noteform textarea { font: inherit; font-size: 15px; line-height: 1.4; width: 100%; border: 2px solid var(--line); border-radius: 12px; padding: 8px 10px; background: var(--panel); color: var(--ink); }
+      .noteform textarea { resize: vertical; min-height: 84px; }
+      .noteform input:focus, .noteform textarea:focus { outline: 3px solid rgba(111, 143, 78, 0.45); outline-offset: 1px; }
+      .noterow { display: flex; align-items: center; gap: 10px; }
+      .noterow .count { font-size: 12px; font-weight: 700; color: var(--soft); }
+      .noterow .count.near { color: #a5462e; }
+      .noterow .kbtn { margin-left: auto; }
+      .noteform .small { margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--soft); }
+      /* Off the page, not display:none: some bots skip fields they can tell are hidden. */
+      .trap { position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden; }
+      .waitline { margin-top: 8px; font-weight: 700; }
+      .notesec { max-width: 760px; }
+      .notesec .dayhead { margin: 0; }
+      .notesec .empty { text-align: left; padding: 10px 0 4px; }
+      .notesnotice .notice { max-width: 600px; margin: 0 0 8px; }
+      .notesec > .kbtn { margin-top: 10px; }
+      .entry .who { color: var(--ink); font-size: 13px; }
+      .entry p.quote { margin: 8px 0 0; padding: 2px 0 2px 12px; border-left: 3px solid rgba(59, 42, 32, 0.3); font-style: italic; color: #5d4a3c; white-space: pre-line; overflow-wrap: anywhere; }
+      .entry p.say { margin: 6px 0 0; font-size: 13px; color: var(--soft); }
+      .note .answer, .reply .answer { margin-top: 10px; max-width: 640px; background: #fbf5e8; border: 2px solid var(--line); border-radius: 12px; padding: 8px 12px; }
+      .note .answer .ah, .reply .answer .ah { display: flex; align-items: baseline; gap: 8px; font-size: 14px; }
+      .note .answer .ah span, .reply .answer .ah span { margin-left: auto; font-size: 12px; font-weight: 700; color: var(--soft); }
+      .note .answer p, .reply .answer p { margin: 4px 0 0; font-size: 14.5px; overflow-wrap: anywhere; }
+      .entry .kbtns { margin-top: 8px; }
+      .entry .top .as { color: var(--soft); font-weight: 700; }
+      .kbtns { align-items: center; }
+      .kbtns .said { font-size: 13px; font-weight: 700; color: #4f6a35; }
+      .kbtns .said.bad { color: #9a3b2f; }
+      .notesec.keeperbox { margin-bottom: 14px; padding: 10px 12px 4px; border: 2px dashed rgba(59, 42, 32, 0.35); border-radius: 14px; background: rgba(251, 245, 232, 0.6); }
+      .notesec.keeperbox > .kbtns { margin-top: 8px; }
+      .chip.idea { background: #f3e2a6; }
+
       #toast { left: 50%; bottom: 74px; transform: translateX(-50%); padding: 8px 10px 8px 16px; font-size: 14px; cursor: pointer; animation: slideIn 0.4s ease; max-width: calc(100vw - 32px); }
       #toast .go { background: var(--orange); border: 2px solid var(--line); border-radius: 999px; padding: 2px 12px; font-weight: 800; font-size: 13px; flex: none; }
       #toast .tt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -205,7 +240,7 @@
         .grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
         #toast { bottom: 130px; }
         /* 16px or iOS zooms in on tap and stays zoomed; buttons a finger can hit. */
-        .keeper textarea, .keeper input { font-size: 16px; }
+        .keeper textarea, .keeper input, .noteform input, .noteform textarea { font-size: 16px; }
         .kbtn { min-height: 44px; padding: 8px 20px; }
       }
     </style>
@@ -228,6 +263,7 @@
         <div id="nowMore">
           <button class="nrow" id="lastMade" hidden></button>
           <button class="nrow" id="lastRead" hidden></button>
+          <button class="nrow" id="notesRow" hidden></button>
           <div id="brain"></div>
         </div>
       </section>
@@ -243,6 +279,7 @@
         <button data-sheet="gallery"><span>Gallery</span><i class="round" data-icon="gallery"></i></button>
         <button data-sheet="internet"><span>Internet</span><i class="round" data-icon="internet"></i></button>
         <button data-sheet="asks"><span>Khina asks</span><i class="round" data-icon="asks"></i></button>
+        <button data-sheet="notes"><span>Notes</span><i class="round" data-icon="notes"></i></button>
         <button id="follow" aria-pressed="true"><span>Follow Khina</span><i class="round" data-icon="follow"></i></button>
         <button id="walk" aria-pressed="false"><span>Walk around</span><i class="round" data-icon="walk"></i></button>
       </nav>

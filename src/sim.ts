@@ -12,9 +12,10 @@ import { maybeDrama } from './world/drama.ts';
 import { decide, SENSES, type Decision, type Mind } from './mind/decide.ts';
 import { fromHedgehogDays, onMind, STALE_NOTE, templateDiary } from './mind/prompts.ts';
 import { formFor, pieceRequest } from './mind/making.ts';
+import { checkNotes, finishReading, nudgeFor, releaseNotes, sittingFailed, takeBatch } from './notes.ts';
 import type { PieceStore } from './pieces.ts';
 import { Rng as Seeded, type Rng } from './rng.ts';
-import { HISTORY_KEEP, type Activity, type Completed, type FoodId, type State, type WorkResult } from './state.ts';
+import { HISTORY_KEEP, unreadNotes, type Activity, type Completed, type FoodId, type State, type WorkResult } from './state.ts';
 import { clock, dayOf, hourOf, minuteOfDay, stamp } from './time.ts';
 import { actionDef, type ActionDef, type Ctx } from './world/actions.ts';
 import { PLACES, travelMinutes } from './world/places.ts';
@@ -101,6 +102,8 @@ export class Sim {
     this.asks = o.asks ?? false;
     s.pieces ??= [];
     s.readings ??= [];
+    // No sitting with the notes survives a restart: notes she had in paw wait again.
+    releaseNotes(s);
     if (this.outDir) mkdirSync(this.outDir, { recursive: true });
     updatePresence(s.world, s.t, this.rng);
   }
@@ -220,16 +223,25 @@ export class Sim {
       // Making and the internet only while there is budget for the real thing, so the diary never
       // says Khina made something that is not in the Gallery.
       const work = modelUp && !!this.mind.canWork?.();
-      s.world.can = { make: work, own: modelUp, net: work, post: modelUp && !!this.mind.canPost?.() };
+      const notes = modelUp && !!this.mind.canReadNotes?.();
+      s.world.can = { make: work, own: modelUp, net: work, post: modelUp && !!this.mind.canPost?.(), notes };
+      // Notes waiting at the internet hut are on her mind (the hut's pull grows too: actions.ts notesPull).
+      const waiting = unreadNotes(s).length;
+      if (notes && waiting) {
+        addThought(s, { key: 'notes-waiting', text: waiting === 1 ? 'There is a note waiting at the internet hut' : `There are ${waiting} notes waiting at the internet hut`, value: 1, hours: 1 });
+      }
     }
     const d = await decide(s, this.rng, this.mind, ++this.decisionCount);
     this.decisions.push(d);
     this.event({ type: 'decision', ...d });
     const def = actionDef(d.actionId);
     const place = d.place ?? (def.place === 'here' ? s.place : def.place);
+    // A visitor's idea she is taking up: the site shows whose it was, whatever the reason says.
+    const nudge = nudgeFor(s, def.id);
     const base: Activity = {
       kind: 'walk', actionId: def.id, detail: d.detail, reason: d.reason, origin: d.origin, place,
       startedAt: s.t, endsAt: null, duration: 0, moodBefore: s.mood, decisionId: d.id,
+      ...(nudge ? { nudgedBy: nudge.who ?? 'a visitor' } : {}),
     };
     const what = `${def.label}${d.detail ? ` (${d.detail})` : ''}`;
     this.onLine(`${stamp(s.t)}  ${pad(PLACES[s.place].short, 20)} → ${what}  · "${d.reason}" [${d.origin}${d.why ? `: ${d.why}` : ''}]`);
@@ -300,12 +312,25 @@ export class Sim {
       // The latest thing she made as a bunny (a hedgehog-era piece is not hers to post about now).
       const latest = s.pieces.findLast((p) => !fromHedgehogDays(s, p.t, p.title));
       const hoursAgo = latest ? (s.t - latest.t) / 60 : null;
-      const recent = this.log.filter((r) => r.diary).slice(-5).map((r) => r.diary as string);
+      // Not her lines about visitors' notes: a stranger's note must not find its way into a public post.
+      const recent = this.log.filter((r) => r.diary && r.actionId !== 'notes').slice(-5).map((r) => r.diary as string);
       const job = m.writePost(s, act.detail, recent, latest, hoursAgo).then((p): WorkResult =>
         typeof p === 'string'
           ? { kind: 'none', why: p }
           : { kind: 'post', post: { t: s.t, text: p.text, about: act.detail, ...(p.sharePiece && latest ? { piece: { id: latest.id, title: latest.title, form: latest.form } } : {}) } },
       );
+      this.jobs.set(act.decisionId, job.catch((err: unknown) => ({ kind: 'none', why: String(err).slice(0, 120) })));
+      return;
+    }
+    if (def.work === 'notes') {
+      if (!m.readNotes || !m.canReadNotes?.()) return;
+      const waiting = unreadNotes(s).length;
+      const batch = takeBatch(s, this.workRng);
+      if (!batch.length) return;
+      act.detail = `${batch.length} new`;
+      const recent = this.log.filter((r) => r.diary).slice(-4).map((r) => r.diary);
+      // Code checks every word the model hands back before any of it is kept.
+      const job = m.readNotes(s, batch, recent, waiting).then((a): WorkResult => (typeof a === 'string' ? { kind: 'none', why: a } : { kind: 'notes', read: checkNotes(a, batch, waiting) }));
       this.jobs.set(act.decisionId, job.catch((err: unknown) => ({ kind: 'none', why: String(err).slice(0, 120) })));
       return;
     }
@@ -352,10 +377,26 @@ export class Sim {
       if (s.posts.length > 100) s.posts.splice(0, s.posts.length - 100);
       this.event({ type: 'post', post: r.post });
       this.onLine(`${' '.repeat(10)}✉ posted: ${r.post.text}`);
+    } else if (r.kind === 'notes') {
+      const made = finishReading(s, r.read, Date.now());
+      for (const reply of made) this.event({ type: 'reply', reply });
+      this.event({ type: 'notes', n: r.read.ids.length, answered: made.length, ...(r.read.nudge ? { nudge: r.read.nudge.actionId } : {}) });
+      // Counts and the idea's action id only: what visitors wrote stays out of the console.
+      this.onLine(`${' '.repeat(10)}✉ read ${r.read.ids.length} visitor notes, answered ${made.length}${r.read.nudge ? ` (an idea from a note: ${r.read.nudge.actionId})` : ''}`);
+      if (!unreadNotes(s).length) s.thoughts = s.thoughts.filter((th) => th.key !== 'notes-waiting');
     } else {
       this.event({ type: 'work-failed', why: r.why });
       this.onLine(`${' '.repeat(10)}✗ real work failed: ${r.why}`);
+      // A sitting with the notes that failed while the model was there may be a note's doing (one that
+      // makes it refuse, or ramble): each note in it gets a try, and one that keeps failing is set aside.
+      // When the API itself is down or out of budget it is nobody's fault, and they just wait again.
+      if (a.actionId === 'notes' && this.mind.unavailable() === null) {
+        const aside = sittingFailed(s);
+        if (aside) this.onLine(`${' '.repeat(10)}✉ set aside ${aside} visitor note${aside === 1 ? '' : 's'} her sittings kept failing on`);
+      }
     }
+    // Notes taken for a sitting that came to nothing wait to be read again.
+    releaseNotes(s);
   }
 
   private async complete(def: ActionDef, a: Activity): Promise<void> {
@@ -379,6 +420,8 @@ export class Sim {
     if (out.find) s.finds.push({ name: out.find, t: s.t });
     if (out.made) s.made.push({ what: out.made, t: s.t });
     if (out.thought) addThought(s, out.thought);
+    // She took up a visitor's idea: it has done its job and stops pulling.
+    if (a.nudgedBy !== undefined) s.thoughts = s.thoughts.filter((th) => th.key !== `nudge:${def.id}`);
     s.recent.unshift(def.id);
     s.recent.length = Math.min(s.recent.length, 10);
 
@@ -390,11 +433,13 @@ export class Sim {
       remember(s, { text: out.thought.text, where: PLACES[a.place].at, category: out.thought.key.split('-')[0] as string, salience: strength });
     }
     if (strength >= 3) s.lastNotable = s.t;
+    // Reading visitors' notes brings its own diary line, already checked (src/notes.ts): no second call.
+    const ownLine = a.result?.kind === 'notes' ? a.result.read.diary : '';
     await this.finish(
       {
         kind: 'done', actionId: def.id, label: def.label, gist: def.gist, place: a.place,
         start: a.startedAt, end: s.t, detail: a.detail, reason: a.reason, origin: a.origin,
-        outcome: out.text, diary: '', diaryBy: 'none', moodBefore: a.moodBefore, moodAfter: s.mood,
+        outcome: out.text, diary: ownLine, diaryBy: ownLine ? 'model' : 'none', moodBefore: a.moodBefore, moodAfter: s.mood,
         who: a.who ?? [], stale, felt: Math.round(felt * 10) / 10,
       },
       def.diary !== false,
@@ -404,7 +449,7 @@ export class Sim {
   private async finish(rec: Completed, writeDiary: boolean): Promise<void> {
     const s = this.s;
     s.activity = null;
-    if (writeDiary) {
+    if (writeDiary && !rec.diary) {
       const recent = this.log.filter((r) => r.diary).slice(-4).map((r) => r.diary);
       // Only draw from the seeded random stream when the model is on, so offline replays stay identical.
       const sense = this.mind.kind === 'model' ? this.rng.pick(SENSES) : 'none';

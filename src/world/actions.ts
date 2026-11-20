@@ -3,7 +3,7 @@
 
 import type { Effects } from '../config.ts';
 import type { Rng } from '../rng.ts';
-import { FOOD_IDS, pantryTotal, type Activity, type AskAnswer, type FoodId, type PieceForm, type State } from '../state.ts';
+import { FOOD_IDS, pantryTotal, unreadNotes, type Activity, type AskAnswer, type FoodId, type NotesRead, type PieceForm, type State } from '../state.ts';
 import { clock, hourOf, isDark, isNight, nextMorning } from '../time.ts';
 import type { PlaceId } from './places.ts';
 import { bakeryOpen, isWet, names, nextTrain, presentAt, senderName, verb, VILLAGERS, type Letter, type VillagerId } from './village.ts';
@@ -27,7 +27,7 @@ export interface Outcome {
 }
 
 export type Topic =
-  | 'rest' | 'food' | 'home' | 'making' | 'social' | 'nature' | 'water' | 'exploring' | 'trains' | 'post';
+  | 'rest' | 'food' | 'home' | 'making' | 'social' | 'nature' | 'water' | 'exploring' | 'trains' | 'post' | 'visitors';
 
 export interface ActionDef {
   id: string;
@@ -68,9 +68,10 @@ export interface ActionDef {
   diary?: boolean;
   /**
    * Real work done while the action runs (live server with the model on): 'piece' makes a real
-   * drawing, poem, song or game; 'web' looks something up online. The outcome reads act.result.
+   * drawing, poem, song or game; 'web' looks something up online; 'notes' reads a few visitors' notes
+   * (src/notes.ts). The outcome reads act.result.
    */
-  work?: 'piece' | 'web' | 'post';
+  work?: 'piece' | 'web' | 'post' | 'notes';
 }
 
 /** How the Keeper's answer to one of her asks feels once she reads it: glad at a yes, patient at "not
@@ -957,6 +958,36 @@ export const ACTIONS: ActionDef[] = [
     },
   },
   {
+    id: 'notes',
+    place: 'nethut',
+    label: 'read the notes visitors left',
+    doing: 'reading visitor notes',
+    gist: 'reading notes from visitors',
+    // Its own topic: chatting with Bramwell every day must not make strangers' notes feel old.
+    topic: 'visitors',
+    effort: 'rest',
+    minutes: [15, 35],
+    effects: { company: 18, novelty: 10, calm: -2 },
+    // More waiting is more new; too many is a bit much, like a real inbox.
+    expect: ({ s }) => notesExtra(unreadNotes(s).length),
+    blocked: ({ s }) => (!s.world.can?.notes ? 'the old computer would not switch on' : unreadNotes(s).length ? null : 'there were no new notes'),
+    note: ({ s }) => {
+      const n = unreadNotes(s).length;
+      return `${n} note${n === 1 ? '' : 's'} waiting`;
+    },
+    scoreMult: ({ s }) => notesPull(s),
+    work: 'notes',
+    outcome: (_c, act) => {
+      const r = act.result;
+      if (r?.kind === 'notes') return notesOutcome(r.read);
+      return {
+        text: 'sat at the old computer to read the notes visitors left, but the screen froze before Khina got far',
+        extra: { company: -12, novelty: -6 },
+        thought: { key: 'notes-froze', text: 'The notes would not open on the old computer', value: -2, hours: 3 },
+      };
+    },
+  },
+  {
     id: 'own',
     place: 'here',
     label: 'something else entirely, an idea of my own',
@@ -1027,6 +1058,53 @@ export const OWN_FALLBACK: { detail: string; kind: OwnKind }[] = [
   { detail: 'rearrange the finds by colour', kind: 'home' },
 ];
 
+/** More unread notes than this is a bit much: she can't read them all, like a real inbox. */
+export const NOTES_A_LOT = 40;
+
+/** What a pile of waiting notes adds to a sitting: something new, and a little overwhelm when it is huge. */
+function notesExtra(waiting: number): Effects {
+  const out: Effects = { novelty: Math.min(8, Math.floor(waiting / 5)) };
+  if (waiting > NOTES_A_LOT) out.calm = -6;
+  return out;
+}
+
+/**
+ * The gentle pull of notes waiting at the internet hut: it grows with how many there are and how long
+ * the oldest has waited (about 1.5× for a new one, 4× after five Khina hours), so she gets to them
+ * within a few hours. A multiplier on the body's own score, never a must.
+ */
+function notesPull(s: State): number {
+  const unread = unreadNotes(s);
+  const oldest = unread[0];
+  if (!oldest) return 1;
+  const hours = Math.max(0, (s.t - oldest.t) / 60);
+  return 1 + Math.min(0.5, unread.length / 40) + Math.min(3, hours * 0.6);
+}
+
+const both = (names: string[]) => (names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : (names[0] ?? ''));
+
+/** A sitting with the notes, in code's words: how many, who she wrote back to, never what they said. */
+function notesOutcome(read: NotesRead): Outcome {
+  const n = read.ids.length;
+  const names = read.replies.map((r) => r.name);
+  const many = read.waiting > NOTES_A_LOT;
+  const idea = read.nudge ? `; ${read.nudge.name} suggested ${actionDef(read.nudge.actionId).gist}` : '';
+  return {
+    text:
+      `read ${n} note${n === 1 ? '' : 's'} that visitors from far away had left on the old computer` +
+      (names.length ? `, and wrote back to ${both(names)}` : '') +
+      (many ? `; ${read.waiting} were waiting, far too many to read in one go` : '') +
+      idea,
+    extra: notesExtra(read.waiting),
+    // No names in her thoughts: they go into the prompts for what she makes and looks up.
+    thought: many
+      ? { key: 'notes-many', text: "So many notes. I can't read them all", value: -1, hours: 3 }
+      : names.length
+        ? { key: 'notes', text: `Wrote back to ${names.length === 1 ? 'a visitor' : 'visitors'} on the internet`, value: 3, hours: 8 }
+        : { key: 'notes', text: 'Read notes from visitors far away', value: 2, hours: 6 },
+  };
+}
+
 function ownOutcome({ s, rng }: Ctx, act: Activity) {
   const kind = act.actionId.split('.')[1] as OwnKind | undefined;
   if (kind === 'social' && presentAt(s.world, act.place).length === 0)
@@ -1048,7 +1126,13 @@ const OWN_DEFS: Record<string, ActionDef> = Object.fromEntries(
 export const ACTION_BY_ID: Record<string, ActionDef> = Object.fromEntries(ACTIONS.map((a) => [a.id, a]));
 export const ACTION_IDS = ACTIONS.map((a) => a.id);
 /** Actions beyond the fixed village life (live server only; blocked in experiments). */
-export const BEYOND_IDS = new Set(['make', 'browse', 'own', 'post']);
+export const BEYOND_IDS = new Set(['make', 'browse', 'own', 'post', 'notes']);
+/**
+ * What a visitor's note may nudge her toward (src/notes.ts): her own menu, minus what reaches the outside
+ * world or has no shape of its own (posting, her own ideas, reading notes again), what costs money
+ * (making a real piece, drawing, looking something up), and bed or idling.
+ */
+export const NUDGE_IDS = ACTION_IDS.filter((id) => !['post', 'own', 'notes', 'make', 'draw', 'browse', 'sleep', 'idle'].includes(id));
 
 export function actionDef(id: string): ActionDef {
   const def = ACTION_BY_ID[id] ?? OWN_DEFS[id];

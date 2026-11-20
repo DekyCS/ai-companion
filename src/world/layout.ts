@@ -105,6 +105,7 @@ export const SPOTS: Record<string, Spot> = {
   // the old computer on the porch, paws on the keyboard (top 0.31) in front of her.
   browse: { at: [17.78, -11.31], z: 0.08, face: [17.38, -11.09], pose: 'work', table: 0.31 },
   post: { at: [17.78, -11.31], z: 0.08, face: [17.38, -11.09], pose: 'work', table: 0.31 },
+  notes: { at: [17.78, -11.31], z: 0.08, face: [17.38, -11.09], pose: 'work', table: 0.31 },
   nethut_idle: { at: [18.95, -11.05], face: [18.95, -13], pose: 'stand' },
 };
 

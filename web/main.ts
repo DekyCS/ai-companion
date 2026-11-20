@@ -686,10 +686,18 @@ const mock = params.has('mock') ? await import('./mock.ts') : null;
 const hud = createHud({ canWalk: !!player, onMode: (m) => setMode(m) });
 if (mock) {
   hud.setSource(mock.mockSource(0));
+  hud.setNotesSource(mock.mockNotes);
   setTimeout(() => {
     const p = snap ? mock.mockSnap(snap).pieces?.[0] : undefined;
     if (p) hud.piece(p);
   }, 4000);
+  // Two made-up answers arrive a little later, half a second apart, for the toast and the badge.
+  setTimeout(() => {
+    if (!snap) return;
+    const [a, b] = mock.mockAnswerArrives(snap);
+    hud.reply(a!);
+    setTimeout(() => hud.reply(b!), 500);
+  }, 9000);
 }
 
 function setMode(next: Mode) {
@@ -804,6 +812,7 @@ events.addEventListener('piece', (e) => hud.piece(JSON.parse((e as MessageEvent)
 events.addEventListener('reading', (e) => hud.reading(JSON.parse((e as MessageEvent).data).reading));
 events.addEventListener('post', (e) => hud.post(JSON.parse((e as MessageEvent).data).post));
 events.addEventListener('ask', (e) => hud.ask(JSON.parse((e as MessageEvent).data).ask));
+events.addEventListener('reply', (e) => hud.reply(JSON.parse((e as MessageEvent).data).reply));
 events.addEventListener('clock', (e) => {
   clockT = JSON.parse((e as MessageEvent).data).t;
   clockAt = performance.now();

@@ -1,7 +1,7 @@
 // ?mock: made-up pieces, readings and night pages, so the HUD can be checked without the model.
 // Loaded only when the page is opened with ?mock.
 
-import type { Ask, HudSnap, PieceFull, PieceRef, PieceSource, Reading } from './hud.ts';
+import type { Ask, HudSnap, MineStatus, MyNote, NoteReply, NotesSource, PieceFull, PieceRef, PieceSource, Reading } from './hud.ts';
 
 const PICTURE = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><rect width="400" height="300" fill="#7a5a3f"/><path d="M0 230 Q100 210 200 228 T400 222 V300 H0Z" fill="#4a3526"/><path d="M60 228 C70 170 90 120 120 100 C150 120 170 170 178 228" fill="none" stroke="#1f1610" stroke-width="5" stroke-linecap="round"/><path d="M120 100 C100 70 130 40 160 60 C190 40 230 70 205 100 C240 110 225 150 190 140 C170 160 130 150 120 100Z" fill="#2a1f17" opacity="0.8"/><circle cx="300" cy="70" r="26" fill="none" stroke="#1f1610" stroke-width="3" stroke-dasharray="6 5"/><path d="M250 240 q10 -14 22 0 q10 -14 22 0" fill="none" stroke="#1f1610" stroke-width="3"/></svg>`;
 
@@ -57,24 +57,83 @@ export function mockSnap<T extends HudSnap>(s: T): T {
       { day: Math.max(1, s.day - 1), text: 'The lantern still does not light. I fiddled with it twice and said so to the bench. Bramwell gave me crusts, which helped more than the lantern did.' },
     ],
     asks: mockAsks(s),
+    unreadCount: 9,
+    replies: mockReplies(s),
   };
 }
+
+const HOUR = 3_600_000;
+/** Khina's day and clock some Khina minutes before the snapshot, as the server sends them. */
+function when(s: HudSnap, minutesAgo: number) {
+  const t = Math.max(0, s.t - minutesAgo);
+  const day = Math.floor(t / 1440) + 1;
+  const m = t % 1440;
+  const wd = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][(day - 1) % 7];
+  return { t, day, clock: `${wd} ${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}` };
+}
+
+/** Answers that "arrived" while the page was open (see mockAnswerArrives), newest first. */
+const arrived: Omit<NoteReply, 't' | 'day' | 'clock'>[] = [];
+const started = Date.now();
+
+/** Her answers to visitors' notes, newest first. */
+function mockReplies(s: HudSnap): NoteReply[] {
+  return [
+    ...arrived.map((r) => ({ ...r, ...when(s, 5) })),
+    { id: 'a000000000000003', ...when(s, 260), at: started - 3 * HOUR, name: 'Priya', note: 'I made carrot soup today and thought of you. Do you like carrots or is that just a story people tell?', reply: 'I like them a lot, Priya. The tops are the best part, but nobody believes me.' },
+    { id: 'a000000000000002', ...when(s, 900), at: started - 11 * HOUR, name: 'a visitor', note: 'It snowed here for the first time this year. Have you ever seen snow?', reply: 'Not yet. I think it would be very quiet. I would like quiet that you can see.' },
+    { id: 'a000000000000001', ...when(s, 2100), at: started - 26 * HOUR, name: 'Tom', note: 'You should go and watch the fish again, the heron was there this morning!', reply: 'I went, Tom. The heron stood on one leg the whole time and so did I, nearly.' },
+  ];
+}
+
+/**
+ * One sitting's answers, as the server's 'reply' events send them (a moment apart): one to Sam and one to
+ * this browser's waiting note, so ?mock shows the toast for both. The next snapshots include them too.
+ */
+export function mockAnswerArrives(s: HudSnap): NoteReply[] {
+  const sam = { id: 'a000000000000004', at: Date.now(), name: 'Sam', note: 'Hello Khina! What is your favourite place in the village?', reply: 'The bench by the stream, Sam. It is cold, but the water talks the whole time.' };
+  const lee = { id: 'b000000000000002', at: Date.now(), name: 'Lee', note: myNotes.find((n) => n.id === 'b000000000000002')!.text, reply: 'Thank you, Lee. I will ask Bramwell about a wick; he knows where everything is.' };
+  arrived.unshift(lee, sam);
+  myStatus[lee.id] = 'answered';
+  return [sam, lee].map((r) => ({ ...r, ...when(s, 0) }));
+}
+
+/** "Your notes" for ?mock: one still waiting, one she read; what is sent here stays on the page. */
+const myNotes: MyNote[] = [
+  { id: 'b000000000000002', name: 'Lee', text: 'Hi Khina, I hope the lantern works soon. Maybe try the bakery for a new wick?', at: started - 40 * 60_000 },
+  { id: 'b000000000000001', name: 'Lee', text: 'Your poem about the blue button made my morning.', at: started - 20 * HOUR },
+];
+const myStatus: Record<string, MineStatus['status']> = { b000000000000002: 'waiting', b000000000000001: 'read' };
+
+export const mockNotes: NotesSource = {
+  kept: () => myNotes,
+  keep(n) {
+    myNotes.unshift(n);
+    myStatus[n.id] = 'waiting';
+  },
+  mine: async (ids) =>
+    ids.map((id) => {
+      const status = myStatus[id] ?? 'gone';
+      const a = arrived.find((r) => r.id === id);
+      return status === 'answered' && a ? { id, status, reply: { ...a, t: 0 } } : { id, status };
+    }),
+  send: async (body) => {
+    const words = body.text.trim().split(/\s+/).filter(Boolean).length;
+    if (words < 2) return { status: 400, error: 'A note needs at least two words.' };
+    const id = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join('');
+    return { status: 200, id };
+  },
+};
 
 /** Two asks waiting for the Keeper and two answered, newest first, as the server sends them. */
 function mockAsks(s: HudSnap): Ask[] {
   const now = Date.now();
-  const hour = 3_600_000;
-  const when = (minutesAgo: number) => {
-    const t = Math.max(0, s.t - minutesAgo);
-    const day = Math.floor(t / 1440) + 1;
-    const m = t % 1440;
-    const wd = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][(day - 1) % 7];
-    return { t, day, clock: `${wd} ${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}` };
-  };
+  const hour = HOUR;
+  const at = (minutesAgo: number) => when(s, minutesAgo);
   return [
-    { id: 'mock4', ...when(200), at: now - 2 * hour, text: 'Could the stream have a few stepping stones by the dam?', why: 'I keep getting my paws wet halfway across.', status: 'open' },
-    { id: 'mock3', ...when(900), at: now - 14 * hour, text: 'Could I have a place on the site where visitors can leave me a note?', why: 'The letterbox only ever has Tansy and the squirrels in it.', status: 'open' },
-    { id: 'mock2', ...when(1700), at: now - 27 * hour, text: 'Could I have a little boat for the stream?', why: 'I would like to see where the water goes.', status: 'no', answeredAt: now - 20 * hour, note: 'Not a boat, deep water is no place for a bunny. Ask me for a bridge instead.' },
-    { id: 'mock1', ...when(2600), at: now - 40 * hour, text: 'Could I have an account somewhere, so strangers can read my posts?', why: 'Right now my posts only stay on the computer in the hut.', status: 'done', answeredAt: now - 30 * hour, note: 'Made you one on Bluesky. Your posts go there now.' },
+    { id: 'mock4', ...at(200), at: now - 2 * hour, text: 'Could the stream have a few stepping stones by the dam?', why: 'I keep getting my paws wet halfway across.', status: 'open' },
+    { id: 'mock3', ...at(900), at: now - 14 * hour, text: 'Could I have a place on the site where visitors can leave me a note?', why: 'The letterbox only ever has Tansy and the squirrels in it.', status: 'open' },
+    { id: 'mock2', ...at(1700), at: now - 27 * hour, text: 'Could I have a little boat for the stream?', why: 'I would like to see where the water goes.', status: 'no', answeredAt: now - 20 * hour, note: 'Not a boat, deep water is no place for a bunny. Ask me for a bridge instead.' },
+    { id: 'mock1', ...at(2600), at: now - 40 * hour, text: 'Could I have an account somewhere, so strangers can read my posts?', why: 'Right now my posts only stay on the computer in the hut.', status: 'done', answeredAt: now - 30 * hour, note: 'Made you one on Bluesky. Your posts go there now.' },
   ];
 }

@@ -12,6 +12,10 @@
 // Khina's asks to the Keeper are in the snapshot for anyone to read; POST /asks/<id> answers one,
 // only with the header x-keeper-key equal to KHINA_KEEPER_KEY (at least 24 characters; src/asks.ts).
 // POST /asks/check says whether a key is good, so the page can tell before the Keeper types a note.
+// Visitors' notes (src/notes.ts): POST /notes {name?, text, website?} leaves one (rate-limited by
+// address and overall); GET /notes/mine?ids=a,b says how a browser's own notes are doing. Unread notes
+// are private: GET /notes/inbox, POST /notes/inbox/clear?upto=<ms>, POST /notes/<id>/hide and
+// POST /notes/<id>/show need the Keeper's key, like answering asks.
 
 import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
@@ -28,8 +32,9 @@ import { Sim } from './sim.ts';
 import { PieceStore } from './pieces.ts';
 import { TOY_CSP } from './mind/making.ts';
 import { makeOutlets, sendEverywhere } from './outlets.ts';
-import { newState, type Ask, type Completed, type PieceRef, type Post, type Reading, type State } from './state.ts';
+import { newState, type Ask, type Completed, type PieceRef, type Post, type Reading, type Reply, type State } from './state.ts';
 import { ASK, answerRequest, asksForSite, checkRequest, keeperGate, newGuard, serverKey } from './asks.ts';
+import { clearRequest, clientIp, hideRequest, inboxRequest, mineRequest, newNoteGate, NOTE, notesSnapshot, replyForSite, sendRequest, showRequest } from './notes.ts';
 import { clock, dayOf, isDark, partOfDay, weekday } from './time.ts';
 import { actionDef } from './world/actions.ts';
 import { PLACES } from './world/places.ts';
@@ -128,6 +133,7 @@ const sim = new Sim(s, {
   onEvent: (e) => {
     if (e.type === 'tick') return;
     if (e.type === 'ask') broadcast('ask', { ask: askWithClock(e.ask as Ask) });
+    if (e.type === 'reply') broadcast('reply', { reply: replyForSite(e.reply as Reply) });
     if (e.type === 'post') {
       const post = e.post as Post;
       broadcast('post', { post: withClock(post) });
@@ -201,6 +207,8 @@ function snapshot() {
             detail: a.detail,
             reason: a.reason,
             origin: a.origin,
+            // A visitor's idea she took up: the name they gave, for a small chip on the site.
+            ...(a.nudgedBy !== undefined ? { nudgedBy: a.nudgedBy } : {}),
           }
         : null,
     letters: s.world.letters.length,
@@ -222,6 +230,8 @@ function snapshot() {
     pages: s.pages.filter((p) => p.text.trim()).slice(-5).map((p) => ({ day: p.day, text: p.text })),
     // What she asked the Keeper for, newest first: anyone may read them, only the Keeper can answer.
     asks: asksForSite(s).map(askWithClock),
+    // Visitors' notes: how many wait (a number only, never their words) and her latest answers.
+    ...notesSnapshot(s),
     moodArc: sim.hours.slice(-48).map((h) => ({ t: h.t, mood: h.mood })),
   };
 }
@@ -286,6 +296,27 @@ function readBody(req: IncomingMessage, max: number): Promise<string | 'big' | '
 const sendJson = (res: ServerResponse, status: number, body: unknown) =>
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify(body));
 
+/**
+ * A request whose body is never wanted: with none on the way it is simply let go; with one (of any
+ * size) the connection is closed once the answer is sent, rather than reading it all to throw away.
+ */
+function dropBody(req: IncomingMessage, res: ServerResponse): void {
+  const coming = Number(req.headers['content-length'] ?? 0) > 0 || req.headers['transfer-encoding'] !== undefined;
+  if (!coming) {
+    req.resume();
+    return;
+  }
+  res.setHeader('connection', 'close');
+  res.on('finish', () => req.destroy());
+}
+
+/**
+ * Who a request came from, for the per-address limits: behind the host's proxy (PORT is set, as on
+ * Railway) the address the edge passes on, on this machine the connection's own (src/notes.ts clientIp).
+ */
+const trustProxy = !!process.env.PORT;
+const ipOf = (req: IncomingMessage) => clientIp({ realIp: req.headers['x-real-ip'], forwarded: req.headers['x-forwarded-for'] }, req.socket.remoteAddress, trustProxy);
+
 /** Wrong keys lately, for every request together (src/asks.ts keeperGate). */
 const keyGuard = newGuard();
 const keeperLog = (line: string | undefined) => line && console.log(`${' '.repeat(10)}${line}`);
@@ -302,18 +333,19 @@ async function handleAnswer(req: IncomingMessage, res: ServerResponse, id: strin
   const header = req.headers['x-keeper-key'];
   const key = typeof header === 'string' ? header : undefined;
   const envKey = process.env.KHINA_KEEPER_KEY;
+  const ip = ipOf(req);
   if (id === 'check') {
-    req.resume();
-    const c = checkRequest(keyGuard, key, envKey, Date.now());
+    dropBody(req, res);
+    const c = checkRequest(keyGuard, key, envKey, Date.now(), ip);
     keeperLog(c.log);
     if (c.status === 204) res.writeHead(204, { 'cache-control': 'no-store' }).end();
     else sendJson(res, c.status, c.body);
     return;
   }
   // Strangers get nothing read and nothing changed.
-  const denied = keeperGate(keyGuard, key, envKey, Date.now());
+  const denied = keeperGate(keyGuard, key, envKey, Date.now(), ip);
   if (denied) {
-    req.resume();
+    dropBody(req, res);
     keeperLog(denied.log);
     sendJson(res, denied.status, denied.body);
     return;
@@ -326,7 +358,7 @@ async function handleAnswer(req: IncomingMessage, res: ServerResponse, id: strin
     res.end(JSON.stringify({ error: body === 'big' ? 'Too long.' : 'Could not read that.' }));
     return;
   }
-  const r = answerRequest(s, { id, key, envKey, body, now: Date.now(), guard: keyGuard });
+  const r = answerRequest(s, { id, key, envKey, body, now: Date.now(), guard: keyGuard, ip });
   if (r.status === 200) {
     const ask = r.body.ask as Ask;
     console.log(`${' '.repeat(10)}✉ the Keeper answered "${ask.text}": ${ask.status}${ask.note ? ` (${ask.note})` : ''}`);
@@ -336,8 +368,87 @@ async function handleAnswer(req: IncomingMessage, res: ServerResponse, id: strin
   sendJson(res, r.status, r.status === 200 ? { ok: true, ask: askWithClock(r.body.ask as Ask) } : r.body);
 }
 
+// ---------- visitors' notes ----------
+/** Who left notes lately, for the rate limits (src/notes.ts). In memory: a restart forgives everyone. */
+const noteGate = newNoteGate();
+
+/** Only these methods on these addresses; anything else is a 405 before any body is read. */
+function onlyMethod(req: IncomingMessage, res: ServerResponse, method: 'GET' | 'POST'): boolean {
+  if (req.method === method) return true;
+  dropBody(req, res);
+  res.writeHead(405, { allow: method }).end(`${method} only`);
+  return false;
+}
+
+/**
+ * POST /notes leaves a note; GET /notes/mine?ids= says how a browser's own notes are doing; the Keeper
+ * reads the unread ones at GET /notes/inbox, throws away what was shown with POST /notes/inbox/clear,
+ * takes one away (or an answer off the site) with POST /notes/<id>/hide, and puts an answer back with
+ * POST /notes/<id>/show. The server log gets counts, never words, names or addresses.
+ */
+async function handleNotes(req: IncomingMessage, res: ServerResponse, path: string, query: URLSearchParams): Promise<void> {
+  const header = req.headers['x-keeper-key'];
+  const key = typeof header === 'string' ? header : undefined;
+  const envKey = process.env.KHINA_KEEPER_KEY;
+  const ip = ipOf(req);
+  const keeper = () => ({ key, envKey, now: Date.now(), guard: keyGuard, ip });
+  const changed = (event: Record<string, unknown>) => {
+    save();
+    broadcast('snap', { snap: snapshot(), event });
+  };
+  if (path === '/notes') {
+    if (!onlyMethod(req, res, 'POST')) return;
+    const body = await readBody(req, NOTE.bodyMax);
+    if (body === 'big' || body === 'error') {
+      res.on('finish', () => req.destroy());
+      res.writeHead(body === 'big' ? 413 : 400, { 'content-type': 'application/json', 'cache-control': 'no-store', connection: 'close' });
+      res.end(JSON.stringify({ error: body === 'big' ? 'That note is too long.' : 'Could not read that.' }));
+      return;
+    }
+    const r = sendRequest(s, { body, contentType: req.headers['content-type'], ip, now: Date.now(), gate: noteGate });
+    keeperLog(r.log);
+    if (r.status === 200 && s.inbox?.some((n) => n.id === r.body.id)) changed({ type: 'note' });
+    sendJson(res, r.status, r.body);
+    return;
+  }
+  if (path === '/notes/mine') {
+    if (!onlyMethod(req, res, 'GET')) return;
+    const r = mineRequest(s, query.get('ids'), noteGate);
+    sendJson(res, r.status, r.body);
+    return;
+  }
+  if (path === '/notes/inbox') {
+    if (!onlyMethod(req, res, 'GET')) return;
+    const r = inboxRequest(s, keeper());
+    keeperLog(r.log);
+    sendJson(res, r.status, r.body);
+    return;
+  }
+  if (path === '/notes/inbox/clear') {
+    if (!onlyMethod(req, res, 'POST')) return;
+    dropBody(req, res);
+    const r = clearRequest(s, { ...keeper(), upto: query.get('upto') });
+    keeperLog(r.log);
+    if (r.status === 200 && r.body.cleared) changed({ type: 'hidden' });
+    sendJson(res, r.status, r.body);
+    return;
+  }
+  const one = /^\/notes\/([^/]+)\/(hide|show)$/.exec(path);
+  if (one) {
+    if (!onlyMethod(req, res, 'POST')) return;
+    dropBody(req, res);
+    const r = (one[2] === 'hide' ? hideRequest : showRequest)(s, { ...keeper(), id: one[1] ?? '' });
+    keeperLog(r.log);
+    if (r.status === 200) changed({ type: one[2] === 'hide' ? 'hidden' : 'shown' });
+    sendJson(res, r.status, r.body);
+    return;
+  }
+  sendJson(res, 404, { error: 'Not found.' });
+}
+
 const startedAt = Date.now();
-const server = createServer(async (req, res) => {
+// Timeouts are checked every 5 s (Node's default is 30 s, which let a dribbling body hang on for ~45 s).
+const server = createServer({ connectionsCheckingInterval: 5_000 }, async (req, res) => {
   const url = req.url ?? '/';
   if (url === '/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
@@ -361,6 +472,16 @@ const server = createServer(async (req, res) => {
   }
   if (url.startsWith('/asks/')) {
     await handleAnswer(req, res, url.slice('/asks/'.length).split('?')[0] ?? '');
+    return;
+  }
+  if (url === '/notes' || url.startsWith('/notes/') || url.startsWith('/notes?')) {
+    try {
+      const u = new URL(url, 'http://khina.local');
+      await handleNotes(req, res, u.pathname, u.searchParams);
+    } catch {
+      // A strange address or body never takes the village down.
+      if (!res.headersSent) sendJson(res, 400, { error: 'Could not read that.' });
+    }
     return;
   }
   if (url === '/pieces') {
@@ -410,6 +531,11 @@ const server = createServer(async (req, res) => {
     res.writeHead(404).end('Not found');
   }
 });
+
+// POST /notes is the first door that reads a body from anyone: a body that dribbles in is cut off
+// (Node would wait 5 minutes). The event stream is untouched: its request is whole as soon as it lands.
+server.requestTimeout = 20_000;
+server.headersTimeout = 15_000;
 
 server.listen(port, host, () => {
   const pace = realClock ? (rate === 1 ? 'real time, on the wall clock' : `${rate}× real time (a Khina day every ${+(24 / rate).toFixed(2)} h)`) : `${speed} game minute${speed === 1 ? '' : 's'} per second`;

@@ -110,6 +110,8 @@ function collect(s: State, rng: Rng, t: Tier, useMask: boolean): Option[] {
     let mult = 1;
     if (def.effort === 'hard' && s.energy < 50) mult *= s.energy / 50;
     mult *= def.scoreMult?.(c) ?? 1;
+    // A visitor's note gave her this idea a little while ago (only ever on the live server).
+    if (s.thoughts.some((th) => th.key === `nudge:${def.id}` && th.until > s.t)) mult *= mind.nudgeMult;
     mult *= 1 / (1 + travel / 25);
 
     const helps = (Object.keys(byNeed) as NeedId[])

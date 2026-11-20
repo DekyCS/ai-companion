@@ -17,6 +17,9 @@ export interface Thought {
   value: number;
   at: number;
   until: number;
+  /** For a visitor's idea (key "nudge:<action>"): the name they gave, kept out of the words above so a
+   * stranger's name never reaches her prompts as a thought (src/notes.ts applyNudge). */
+  who?: string;
 }
 
 export interface Activity {
@@ -44,6 +47,8 @@ export interface Activity {
   decisionId: number;
   /** What the real work behind the action came to (a piece made, a page read online), when there was any. */
   result?: WorkResult;
+  /** A visitor's note gave her the idea: the name they gave ("a visitor" without one). Shown on the site. */
+  nudgedBy?: string;
 }
 
 /** The kinds of real piece Khina can make. */
@@ -108,10 +113,62 @@ export interface Ask {
   note?: string;
 }
 
+/**
+ * A note a visitor left Khina on the site (src/notes.ts). Private while unread: only the Keeper sees
+ * the inbox. She reads them a few at a time at the internet hut; an answered note becomes a public Reply.
+ */
+export interface Note {
+  /** 16 random hex characters; the visitor's browser keeps it to ask how the note is doing. */
+  id: string;
+  /** Real time it came in (epoch ms). */
+  at: number;
+  /** Game minute it came in. */
+  t: number;
+  /** The name the visitor gave, cleaned (at most 24 characters), or "a visitor". */
+  name: string;
+  /** What the visitor wrote, cleaned (at most 280 characters). */
+  text: string;
+  /** 'read' only while she is reading it at the hut; read and answered notes leave the inbox. */
+  status: 'unread' | 'read' | 'answered' | 'hidden';
+  /** Sittings it was in that came to nothing; at NOTE.maxTries it is set aside (src/notes.ts sittingFailed). */
+  tries?: number;
+}
+
+/** Khina's answer to a visitor's note: public, with the note it answers (src/notes.ts). */
+export interface Reply {
+  /** The note's id. */
+  id: string;
+  name: string;
+  /** The note she answered. */
+  note: string;
+  reply: string;
+  /** Real time she wrote it (epoch ms). */
+  at: number;
+  /** Game minute she wrote it. */
+  t: number;
+  /** Taken off the site by the Keeper. */
+  hidden?: boolean;
+}
+
+/** What one sitting with the visitor notes came to, already checked by code (src/notes.ts checkReading). */
+export interface NotesRead {
+  /** The notes she read, oldest first. */
+  ids: string[];
+  /** Her checked answers (at most 2), with the name of who she wrote back to. */
+  replies: { id: string; name: string; reply: string }[];
+  /** Her diary line about it, or '' to let the usual diary writer do it. */
+  diary: string;
+  /** An action a note gave her the idea for, if it is one of hers, and who suggested it. */
+  nudge?: { actionId: string; name: string };
+  /** Unread notes waiting when she sat down (more is more new, and too many is a bit much). */
+  waiting: number;
+}
+
 export type WorkResult =
   | { kind: 'piece'; piece: PieceRef }
   | { kind: 'post'; post: Post }
   | { kind: 'web'; reading: Reading; again?: boolean }
+  | { kind: 'notes'; read: NotesRead }
   | { kind: 'none'; why: string };
 
 /** One finished (or refused) action, as the village's records saw it. */
@@ -235,6 +292,12 @@ export interface State {
   posts?: Post[];
   /** What she asked the Keeper for, oldest first (live server only; missing on older saves). */
   asks?: Ask[];
+  /** Notes visitors left her that she has not read yet, oldest first. Private (live server only). */
+  inbox?: Note[];
+  /** Her answers to visitors' notes, oldest first. Public (live server only). */
+  replies?: Reply[];
+  /** Ids of notes she read and did not answer (no words, no names), so a visitor's page can say "read". */
+  notesRead?: string[];
   world: WorldState;
   personality: Personality;
   rngState: number;
@@ -318,4 +381,9 @@ export const HISTORY_KEEP = 40;
 
 export function pantryTotal(s: State): number {
   return FOOD_IDS.reduce((n, f) => n + (s.pantry[f] ?? 0), 0);
+}
+
+/** Visitors' notes she has not read yet (nor is reading right now), oldest first. */
+export function unreadNotes(s: State): Note[] {
+  return (s.inbox ?? []).filter((n) => n.status === 'unread');
 }

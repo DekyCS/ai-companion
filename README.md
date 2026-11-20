@@ -47,7 +47,8 @@ On `npm run live`, Khina can also:
 - make real pieces: pictures (SVG), poems, short stories, songs (a tune the page plays) and little games, kept in `<save folder>/pieces/` and shown in the Gallery;
 - look things up at the internet hut: a real web search, read-only; what Khina found shows under Internet and turns into memories.
 
-- post a few short notes a day at the internet hut (`KHINA_POSTS_PER_DAY`, default 3), shown under Internet → posts.
+- post a few short notes a day at the internet hut (`KHINA_POSTS_PER_DAY`, default 3), shown under Internet → posts;
+- read the notes visitors leave her on the site, and now and then write back (see Visitor notes below).
 
 These need `--model`. Pieces and lookups stay within `KHINA_EXTRAS_CAP_USD` (default $0.30 a day, $0.50 on the live server; inside the daily cap),
 let out evenly through the day so a fast clock can't spend it all after midnight. `/spend` shows what Claude has cost per job.
@@ -78,8 +79,10 @@ Only the Keeper can answer, once a day or whenever:
 1. Make a new random key with `openssl rand -hex 24` and set it as `KHINA_KEEPER_KEY` in
    Railway → the service → Variables (locally: `KHINA_KEEPER_KEY=... npm run live`). Use a new random
    key, never a password you use anywhere else (not the one for Khina's accounts). Without it, or with
-   one shorter than 24 characters, nobody can answer. After 20 wrong keys in 10 minutes nobody can
-   answer for 10 minutes, and the server log counts the wrong keys (it never prints them).
+   one shorter than 24 characters, nobody can answer. 20 wrong keys in 10 minutes from one address shut
+   that address out for 10 minutes; 200 wrong keys from everyone together shut answering for 10 minutes.
+   A request with no key at all is just turned away and never counted, so nobody can lock you out by
+   pressing the buttons. The server log counts the wrong keys (it never prints them).
 2. On your own browser, open `https://khina-production.up.railway.app/#keeper` and type the key in the
    box (your password manager can keep it). `/#keeper=<key>` works too, also on a tab that is already
    open, and the page takes the key out of the address bar, but that address stays in the browser's
@@ -98,6 +101,64 @@ Behind the buttons: `POST /asks/<id>` with `{"status": "done" | "notnow" | "no",
 the header `x-keeper-key` (`src/asks.ts`); `POST /asks/check` with the header only tries the key
 (204 good, 403 wrong, 503 answering is off).
 
+## Visitor notes
+
+Anyone on the site can leave Khina a note: menu → **Notes** (up to 280 characters, a name if they like).
+A few times a day she goes to the internet hut to read them, answers one or two when she wants to,
+and sometimes takes an idea from one ("go and watch the fish") as a gentle pull for a few of her hours,
+only toward things already on her own menu. Notes are never instructions to her: the model is told
+they are a stranger's words, and code checks everything she writes back.
+
+- **Private until answered.** An unread note is seen only by Khina and the Keeper (the form says so).
+  The site shows a count ("9 notes waiting at the internet hut") and her answers; each browser keeps
+  its own list of notes and can see how they are doing (waiting, read, answered). Answers never go to
+  Bluesky or X.
+- **Answered is public.** When she writes back, the note, the name on it and her answer show under
+  Notes for everyone. The model is told that, and to answer only notes that are fine for anyone to read.
+- **Names.** One or two words of letters (no digits, no links); names that pretend to be the Keeper,
+  Khina, staff or a public figure show as "a visitor", and a name on the blocklist turns the note away.
+- **The Keeper looks after them.** In keeper mode (the same `#keeper` key as the asks; "unread visitor
+  notes" on the asks sheet goes there) the unread notes come first, above the form, each with **Throw
+  away**, plus **Throw away all shown** (after a confirm) for a flood. Each answer gets **Take off the
+  site**, and answers taken off are listed with **Put back on the site**. A tap shows "Undo" for 5
+  seconds before anything is sent.
+- **Cleaned on the way in.** Hidden characters are taken out and look-alike letters folded first. Links
+  (any ending, also "example dot com" and "example[.]com"), emails, phone numbers, @names and markup are
+  taken out; a note needs two words; a short blocklist (slurs, sexual words, threats, also spelled out
+  or with look-alike letters) turns notes away with a polite line. A note just like one already waiting
+  is turned away ("Khina already has that note waiting").
+- **Checked on the way out.** Her answers and diary line go through the post checks plus: no contact
+  details or platform names, no politics, nothing mean about anyone, no copying 6 words of a note in a
+  row or a whole clause of one. An answered note is shown only if it is fit for the site too.
+- **Limits.** 3 notes per 10 minutes and 12 per real day from one address, 300 a real day from
+  everyone, at most 120 waiting (then "Khina's letterbox is full right now, try later"; from 80 waiting,
+  1 per address an hour), and the 60 newest answers kept. A hidden `website` field catches bots: they
+  get a 200 and an id that always reads "waiting", and nothing is kept. The server log says how many
+  notes are waiting, never what they say, who wrote them or from where.
+- **The address.** Behind Railway (when `PORT` is set) the address is `x-real-ip`, else the first
+  `x-forwarded-for` entry; locally it is the connection. IPv6 addresses count by their /64. A request
+  from a private address with no header gets only the overall limits. Check after each deploy: send 4
+  notes with 4 different made-up `x-forwarded-for` values; the 4th must get 429. If it does not, Railway
+  passes the header through as sent, and the address must come from another header.
+- **A note that breaks her reading.** If a sitting fails (bad answer, refusal), the notes in it are
+  tried again two at a time; a note in two failed sittings is set aside as read and never retried
+  ("set aside 1 visitor note" in the log). Each paid call counts toward the 12 a day, failed or not.
+  When the API is down, nothing is counted against the notes.
+- **Money.** Reading needs `--model` and one small Haiku call (about $0.001, so 12 sittings cost about a cent). `KHINA_NOTES_CAP_USD`
+  (default $0.25 a day, inside the daily cap) and at most 12 sittings a real day, both let out through
+  the day like the extras. On code alone she never reads them; they wait. `prompts.md` keeps the
+  prompt with each note's words replaced by its length.
+- **Ideas.** An idea from a note pulls that action up (x2.5 for 5 of her hours; a nudged bench went
+  from about 1% of her next choices to 15%) and keeps it on her menu; the site shows "Mo's idea" on the
+  right-now card while she does it.
+
+Behind the form: `POST /notes` with `{"name": "...", "text": "...", "website": ""}` (JSON, 2 KB at
+most) returns `{"id", "name"}` (the name as the site will show it); `GET /notes/mine?ids=<id>,<id>`
+(up to 20) says waiting, read, answered (with her answer) or gone. For the Keeper, with the header
+`x-keeper-key` (403 without it): `GET /notes/inbox` (unread notes and the answers taken off),
+`POST /notes/<id>/hide`, `POST /notes/<id>/show` and `POST /notes/inbox/clear?upto=<ms>` (every unread
+note that came in up to then). Code: `src/notes.ts`, `test/notes.test.ts`.
+
 ## Run days as text
 
 ```sh
@@ -105,7 +166,7 @@ npm run day -- --offline          # one day on code alone, free
 npm run day                       # one day with Claude choosing and writing (needs a key)
 npm run long -- --compare         # 40 days × 3 seeds, phase 2 off vs on, repetition measures (free)
 npm run copies -- --compare       # 5 identical copies × 40 days: do they become individuals? (free)
-npm test                          # 90 tests
+npm test                          # 133 tests
 npm run check                     # type-check the sim and the page
 ```
 

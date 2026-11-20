@@ -3,7 +3,8 @@
 
 import { mind, taste } from '../config.ts';
 import type { Rng } from '../rng.ts';
-import type { Completed, Origin, PieceRef, Reading, State } from '../state.ts';
+import type { Completed, Note, Origin, PieceRef, Reading, State } from '../state.ts';
+import { nudgeFor, visitorWho, type NotesAnswer } from '../notes.ts';
 import type { PieceDraft, PieceRequest } from './making.ts';
 import { actionDef, OWN_FALLBACK, OWN_KINDS, type OwnKind } from '../world/actions.ts';
 import { PLACE_IDS, type PlaceId } from '../world/places.ts';
@@ -58,9 +59,27 @@ export interface Mind {
   /** Can Khina post right now (model up, today's few posts not used yet)? */
   canPost?(): boolean;
   /** Today's real spend against the caps (live server's /spend). */
-  budgetToday?(): { spent: number; cap: number; extras: number; extrasAllowedNow: number; extrasCap: number; posts: number };
+  budgetToday?(): {
+    spent: number;
+    cap: number;
+    extras: number;
+    extrasAllowedNow: number;
+    extrasCap: number;
+    posts: number;
+    notes?: number;
+    notesAllowedNow?: number;
+    notesCap?: number;
+    noteReads?: number;
+  };
   /** Writes a short public post; returns it checked, or why not. */
   writePost?(s: State, about: string, recentLines: string[], latest: PieceRef | undefined, hoursAgo: number | null): Promise<{ text: string; sharePiece: boolean } | string>;
+  /** Can she read visitors' notes right now (model up, today's notes budget and sittings not used up)? */
+  canReadNotes?(): boolean;
+  /**
+   * Reads a few visitors' notes: her diary line, at most 2 answers and one idea, as the model wrote
+   * them (code checks every word before anything is kept: src/notes.ts checkNotes), or why not.
+   */
+  readNotes?(s: State, notes: Note[], recentLines: string[], waiting: number): Promise<NotesAnswer | string>;
   stats(): MindStats;
 }
 
@@ -104,6 +123,7 @@ const TOPIC_NEED: Partial<Record<string, string>> = {
   food: 'fullness',
   making: 'making',
   social: 'company',
+  visitors: 'company',
   exploring: 'novelty',
   trains: 'novelty',
   home: 'calm',
@@ -111,6 +131,9 @@ const TOPIC_NEED: Partial<Record<string, string>> = {
 
 function templateReason(o: Option, s: State, rng: Rng): string {
   if (o.def.id === 'sleep') return rng.pick(['Bedtime.', 'Cannot keep my eyes open.', 'Ears are drooping. Bed.']);
+  // A visitor's note gave her the idea: she says so ("A visitor, Mo, suggested it.").
+  const nudge = nudgeFor(s, o.def.id);
+  if (nudge && !tier(s)) return `${visitorWho(nudge.who ?? 'a visitor')} suggested it.`;
   if (o.def.id === 'letterbox') return rng.pick(['Might be post.', 'Better check the letterbox.']);
   const t = tier(s);
   if (t === 'starving') return 'So hungry it hurts.';
@@ -153,7 +176,7 @@ function autopilot(s: State, list: Option[], rng: Rng, why: string, origin: Orig
 
 const round = (x: number) => Math.round(x * 1000) / 1000;
 
-const ALWAYS_OFFERED = new Set(['own', 'browse', 'post']);
+const ALWAYS_OFFERED = new Set(['own', 'browse', 'post', 'notes']);
 
 /** When code should not bother asking the model. */
 export function autopilotReason(s: State, list: Option[], m: Mind): string | null {
@@ -188,8 +211,9 @@ export async function decide(s: State, rng: Rng, m: Mind, id: number): Promise<D
     }
   }
   // Khina's own ideas and the internet are doors to anything, not one more pastime: when they are
-  // possible they are always on the menu, and the body's score still weighs the final pick.
-  for (const o of all) if (ALWAYS_OFFERED.has(o.def.id) && !list.includes(o)) list = [...list, o];
+  // possible they are always on the menu, and the body's score still weighs the final pick. So is
+  // what a visitor's note gave her the idea for, while that idea lasts: a pull she can see, not an order.
+  for (const o of all) if ((ALWAYS_OFFERED.has(o.def.id) || nudgeFor(s, o.def.id)) && !list.includes(o)) list = [...list, o];
   const d = await choose(s, rng, m, id, list);
   if (explore) d.explore = true;
   return d;

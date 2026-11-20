@@ -38,14 +38,15 @@ function nightMind(reply: Partial<ReflectOutput> = {}): Mind & { seen: ReflectIn
 }
 
 /** POST /asks/<id>, as the live server passes it on: by default with the right key on both sides. */
-const answer = (s: State, id: string, body: unknown, o: { key?: string; envKey?: string; now?: number; guard?: KeyGuard } = {}) =>
+const answer = (s: State, id: string, body: unknown, o: { key?: string; envKey?: string; now?: number; guard?: KeyGuard; ip?: string } = {}) =>
   answerRequest(s, {
     id,
     key: 'key' in o ? o.key : KEY,
     envKey: 'envKey' in o ? o.envKey : KEY,
     body: typeof body === 'string' ? body : JSON.stringify(body),
     now: o.now ?? NOW,
-    guard: o.guard,
+    guard: o.guard ?? newGuard(),
+    ip: o.ip ?? '203.0.113.1',
   });
 
 // ---------- pacing ----------
@@ -248,24 +249,45 @@ test('answering: only the Keeper key works, and nothing changes otherwise', () =
   assert.equal(keeperKeyOk(KEY, KEY), true);
 });
 
-test('answering: after 20 wrong keys in 10 minutes nobody can answer for 10 minutes, and the count is logged', () => {
+test('answering: after 20 wrong keys in 10 minutes from one address, that address can\'t answer for 10 minutes, and the count is logged', () => {
   const s = newState(1);
   s.asks = [ask({ id: 'k1' })];
   const g = newGuard();
   const MIN = 60_000;
   // Wrong keys spread out over more than the window never shut it.
   for (let i = 0; i < 40; i++) assert.equal(answer(s, 'k1', { status: 'done' }, { key: `guess-${i}`, now: NOW + i * MIN, guard: g }).status, 403);
-  assert.equal(g.lockedUntil, 0);
+  assert.equal(g.byIp.get('203.0.113.1')?.lockedUntil, 0);
   const t0 = NOW + 100 * MIN;
   let last = answer(s, 'k1', { status: 'done' }, { key: 'guess', now: t0, guard: g });
   assert.doesNotMatch(last.log ?? '', /guess/, 'the log counts wrong keys, never says them');
   for (let i = 1; i < ASK.wrongMax; i++) last = answer(s, 'k1', { status: 'done' }, { key: 'guess', now: t0 + i, guard: g });
   assert.equal(last.status, 403, 'the 20th wrong key is still a 403');
-  assert.match(last.log ?? '', /shut for 10 minutes/);
+  assert.match(last.log ?? '', /shut out for 10 minutes/);
   assert.equal(answer(s, 'k1', { status: 'done' }, { key: 'guess', now: t0 + MIN, guard: g }).status, 429);
   assert.equal(answer(s, 'k1', { status: 'done' }, { now: t0 + MIN, guard: g }).status, 429, 'the right key too, or the lock would tell a right guess');
   assert.equal(s.asks[0]?.status, 'open');
   assert.equal(answer(s, 'k1', { status: 'done' }, { now: t0 + 11 * MIN, guard: g }).status, 200, 'open again after 10 minutes');
+});
+
+test('answering: a troll can\'t lock the Keeper out: no key counts for nothing, and one address shuts out only itself', () => {
+  const s = newState(1);
+  s.asks = [ask({ id: 'k1' })];
+  const g = newGuard();
+  // Requests with no key at all are not guesses.
+  for (let i = 0; i < 100; i++) {
+    const r = answer(s, 'k1', { status: 'done' }, { key: undefined, now: NOW + i, guard: g, ip: '198.51.100.9' });
+    assert.equal(r.status, 403);
+    assert.equal(r.log, undefined, 'and leave no line in the log');
+  }
+  assert.equal(g.wrong.length, 0);
+  // Twenty wrong keys from one address shut out that address, not the Keeper's.
+  for (let i = 0; i < ASK.wrongMax; i++) answer(s, 'k1', { status: 'done' }, { key: 'guess', now: NOW + 200 + i, guard: g, ip: '198.51.100.9' });
+  assert.equal(answer(s, 'k1', { status: 'done' }, { key: 'guess', now: NOW + 300, guard: g, ip: '198.51.100.9' }).status, 429);
+  assert.equal(answer(s, 'k1', { status: 'notnow' }, { now: NOW + 300, guard: g, ip: '203.0.113.50' }).status, 200, 'the Keeper, elsewhere, still gets in');
+  // Only very many wrong keys from everyone together shut the door for all.
+  const g2 = newGuard();
+  for (let i = 0; i < ASK.wrongMaxAll; i++) answer(s, 'k1', { status: 'done' }, { key: 'guess', now: NOW + i, guard: g2, ip: `198.51.${i >> 8}.${i & 255}` });
+  assert.equal(answer(s, 'k1', { status: 'done' }, { now: NOW + 1000, guard: g2, ip: '203.0.113.50' }).status, 429);
 });
 
 test('checking a key: 204 good, 403 wrong, 503 answering off', () => {
@@ -274,7 +296,8 @@ test('checking a key: 204 good, 403 wrong, 503 answering off', () => {
   assert.equal(checkRequest(g, 'nope', KEY, NOW).status, 403);
   assert.equal(checkRequest(g, KEY, undefined, NOW).status, 503);
   assert.equal(checkRequest(g, KEY, 'too-short', NOW).status, 503);
-  assert.equal(g.wrong.length, 1, 'a wrong key counts towards the lock; answering off does not');
+  assert.equal(checkRequest(g, undefined, KEY, NOW).status, 403);
+  assert.equal(g.wrong.length, 1, 'a wrong key counts towards the lock; no key, or answering off, does not');
 });
 
 test('answering: bad body 400, too long 413, unknown 404, twice 409', () => {

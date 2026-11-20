@@ -27,10 +27,15 @@ export const ASK = {
   bodyMax: 2048,
   /** Shortest KHINA_KEEPER_KEY that turns answering on: a short one could be guessed. */
   keyMin: 24,
-  /** Wrong keys in `wrongWindowMs` before answering shuts for everyone for `lockMs`. */
+  /** Wrong keys from one address in `wrongWindowMs` before that address is shut out for `lockMs`. */
   wrongMax: 20,
+  /** Wrong keys from everyone together before the door shuts for everyone, the Keeper included: high,
+   * so one troll can't keep the Keeper out (a key of 24+ random characters can't be guessed online). */
+  wrongMaxAll: 200,
   wrongWindowMs: 10 * 60_000,
   lockMs: 10 * 60_000,
+  /** Addresses remembered at once; past it, the ones with nothing recent are forgotten. */
+  guardIps: 2000,
 };
 
 export const openAsks = (s: State): Ask[] => (s.asks ?? []).filter((a) => a.status === 'open');
@@ -168,14 +173,22 @@ export function keeperKeyOk(given: string | undefined, expected: string | undefi
   return timingSafeEqual(a, b);
 }
 
-/** Wrong keys lately, shared by every request, so guessing the key online gets nowhere. */
+/** Wrong keys lately, per address and for everyone, so guessing the key online gets nowhere. */
 export interface KeyGuard {
-  /** When each recent wrong key came (epoch ms). */
+  /** When each recent wrong key came, from anyone (epoch ms). */
   wrong: number[];
   /** Nobody can answer until then, the Keeper included: otherwise a lock would still tell a right guess. */
   lockedUntil: number;
+  /** The same, per address (src/notes.ts clientIp). */
+  byIp: Map<string, { wrong: number[]; lockedUntil: number }>;
 }
-export const newGuard = (): KeyGuard => ({ wrong: [], lockedUntil: 0 });
+export const newGuard = (): KeyGuard => ({ wrong: [], lockedUntil: 0, byIp: new Map() });
+
+/** Addresses with no recent wrong key and no lock are forgotten once there are many. */
+function tidyGuard(g: KeyGuard, now: number): void {
+  if (g.byIp.size <= ASK.guardIps) return;
+  for (const [ip, e] of g.byIp) if (now >= e.lockedUntil && !e.wrong.some((t) => now - t < ASK.wrongWindowMs)) g.byIp.delete(ip);
+}
 
 export interface AnswerResult {
   status: number;
@@ -186,28 +199,42 @@ export interface AnswerResult {
 
 /**
  * The door before anything is read: null lets the Keeper in. Answering off on the server is 403 with
- * `off`, so the page can say so; after ASK.wrongMax wrong keys in ASK.wrongWindowMs, everyone gets 429
- * for ASK.lockMs.
+ * `off`, so the page can say so. No key at all is a plain 403 and counts for nothing (it is no guess).
+ * After ASK.wrongMax wrong keys in ASK.wrongWindowMs from one address, that address gets 429 for
+ * ASK.lockMs; after ASK.wrongMaxAll from everyone together, everyone does. `ip` null or missing is
+ * one shared "unknown" address.
  */
-export function keeperGate(g: KeyGuard, key: string | undefined, envKey: string | undefined, now: number): AnswerResult | null {
+export function keeperGate(g: KeyGuard, key: string | undefined, envKey: string | undefined, now: number, ip?: string | null): AnswerResult | null {
   if (!serverKey(envKey)) return { status: 403, body: { error: 'Answering is off on this server.', off: true } };
-  if (now < g.lockedUntil) return { status: 429, body: { error: 'Too many wrong keys. Try again later.' } };
+  if (!key?.trim()) return { status: 403, body: { error: 'Only the Keeper can answer.' } };
+  const where = ip ?? 'unknown';
+  const mine = g.byIp.get(where);
+  if (now < g.lockedUntil || (mine && now < mine.lockedUntil)) return { status: 429, body: { error: 'Too many wrong keys. Try again later.' } };
   if (keeperKeyOk(key, envKey)) return null;
+  tidyGuard(g, now);
+  const e = mine ?? { wrong: [], lockedUntil: 0 };
+  g.byIp.set(where, e);
+  e.wrong = e.wrong.filter((t) => now - t < ASK.wrongWindowMs);
+  e.wrong.push(now);
   g.wrong = g.wrong.filter((t) => now - t < ASK.wrongWindowMs);
   g.wrong.push(now);
   const minutes = ASK.wrongWindowMs / 60_000;
-  let log = `✗ a wrong keeper key (${g.wrong.length} in the last ${minutes} minutes)`;
-  if (g.wrong.length >= ASK.wrongMax) {
+  let log = `✗ a wrong keeper key (${e.wrong.length} from that address, ${g.wrong.length} in all, in the last ${minutes} minutes)`;
+  if (g.wrong.length >= ASK.wrongMaxAll) {
     g.lockedUntil = now + ASK.lockMs;
     g.wrong = [];
-    log += `: answering is shut for ${ASK.lockMs / 60_000} minutes`;
+    log += `: answering is shut for everyone for ${ASK.lockMs / 60_000} minutes`;
+  } else if (e.wrong.length >= ASK.wrongMax) {
+    e.lockedUntil = now + ASK.lockMs;
+    e.wrong = [];
+    log += `: that address is shut out for ${ASK.lockMs / 60_000} minutes`;
   }
   return { status: 403, body: { error: 'Only the Keeper can answer.' }, log };
 }
 
 /** POST /asks/check: is this key good? 204 yes, 403 no, 503 answering is off, 429 shut for a while. */
-export function checkRequest(g: KeyGuard, key: string | undefined, envKey: string | undefined, now: number): AnswerResult {
-  const denied = keeperGate(g, key, envKey, now);
+export function checkRequest(g: KeyGuard, key: string | undefined, envKey: string | undefined, now: number, ip?: string | null): AnswerResult {
+  const denied = keeperGate(g, key, envKey, now, ip);
   if (!denied) return { status: 204, body: {} };
   return denied.body.off ? { status: 503, body: denied.body } : denied;
 }
@@ -245,13 +272,14 @@ export function answerAsk(s: State, ask: Ask, status: AskAnswer, note: unknown, 
 /**
  * POST /asks/<id> with {status: 'done'|'notnow'|'no', note?}, header x-keeper-key. Pure, so tests
  * need no server: the live server reads the body (at most ASK.bodyMax) and sends back what this says.
- * Nothing changes unless the answer is 200. `guard` is the server's count of wrong keys.
+ * Nothing changes unless the answer is 200. `guard` is the server's count of wrong keys (always
+ * passed: without it there would be no limit on guessing).
  */
 export function answerRequest(
   s: State,
-  r: { id: string; key: string | undefined; envKey: string | undefined; body: string; now: number; guard?: KeyGuard },
+  r: { id: string; key: string | undefined; envKey: string | undefined; body: string; now: number; guard: KeyGuard; ip?: string | null },
 ): AnswerResult {
-  const denied = keeperGate(r.guard ?? newGuard(), r.key, r.envKey, r.now);
+  const denied = keeperGate(r.guard, r.key, r.envKey, r.now, r.ip);
   if (denied) return denied;
   if (Buffer.byteLength(r.body) > ASK.bodyMax) return { status: 413, body: { error: 'Too long.' } };
   let j: unknown;
