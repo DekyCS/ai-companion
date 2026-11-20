@@ -3,6 +3,9 @@
 // what we look at out to the camera is walked through that grid and the ground, and the camera may
 // come no further than the first thing in the way. The village is a few big merged meshes, so a
 // grid is far cheaper than raycasting them every frame.
+// Filling the grid takes a while (a tenth of a second here, half a second on a slow phone), so it
+// is done a few milliseconds at a time when the page is idle, not in one go while the page loads;
+// until it is done nothing counts as in the way.
 
 import * as THREE from 'three';
 
@@ -11,11 +14,29 @@ export interface Clearance {
   clearDist(target: THREE.Vector3, cam: THREE.Vector3): number;
   /** Filled cells, for checking. */
   readonly filled: number;
+  /** Whether the grid is filled in yet. */
+  readonly ready: boolean;
 }
 
 const CELL = 0.5;
 /** Things lower than this above the ground (rocks, rails, benches, crops) don't block the camera. */
 const LOW = 0.7;
+
+/** Runs a job a slice at a time in idle moments (or between frames where there are none). */
+function inSlices(job: Generator<void>, done: () => void) {
+  const later = (f: (d?: IdleDeadline) => void) => ('requestIdleCallback' in window ? requestIdleCallback(f, { timeout: 100 }) : setTimeout(f, 0));
+  const slice = (d?: IdleDeadline) => {
+    const until = performance.now() + THREE.MathUtils.clamp(d?.timeRemaining() ?? 8, 4, 12);
+    while (performance.now() < until) {
+      if (job.next().done) {
+        done();
+        return;
+      }
+    }
+    later(slice);
+  };
+  later(slice);
+}
 
 export function createClearance(root: THREE.Object3D, heightAt: (x: number, z: number) => number, skip: (m: THREE.Mesh) => boolean): Clearance {
   root.updateMatrixWorld(true);
@@ -24,7 +45,7 @@ export function createClearance(root: THREE.Object3D, heightAt: (x: number, z: n
   root.traverse((o) => {
     if (!(o instanceof THREE.Mesh) || skip(o)) return;
     meshes.push(o);
-    o.geometry.computeBoundingBox();
+    if (!o.geometry.boundingBox) o.geometry.computeBoundingBox(); // GLTFLoader sets it from the file
     box.union(o.geometry.boundingBox!.clone().applyMatrix4(o.matrixWorld));
   });
   const x0 = box.min.x - CELL, y0 = box.min.y - CELL, z0 = box.min.z - CELL;
@@ -48,46 +69,53 @@ export function createClearance(root: THREE.Object3D, heightAt: (x: number, z: n
     filled++;
   };
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), p = new THREE.Vector3();
-  for (const m of meshes) {
-    const pos = m.geometry.attributes.position!;
-    const index = m.geometry.index;
-    const tris = index ? index.count / 3 : pos.count / 3;
-    for (let t = 0; t < tris; t++) {
-      const ia = index ? index.getX(t * 3) : t * 3;
-      const ib = index ? index.getX(t * 3 + 1) : t * 3 + 1;
-      const ic = index ? index.getX(t * 3 + 2) : t * 3 + 2;
-      a.fromBufferAttribute(pos, ia).applyMatrix4(m.matrixWorld);
-      b.fromBufferAttribute(pos, ib).applyMatrix4(m.matrixWorld);
-      c.fromBufferAttribute(pos, ic).applyMatrix4(m.matrixWorld);
-      // Sample the triangle finely enough that no cell it passes through is missed.
-      const longest = Math.max(a.distanceTo(b), b.distanceTo(c), c.distanceTo(a));
-      const n = Math.max(1, Math.ceil(longest / (CELL * 0.5)));
-      for (let i = 0; i <= n; i++)
-        for (let j = 0; j <= n - i; j++) {
-          const u = i / n, v = j / n;
-          p.copy(a).multiplyScalar(1 - u - v).addScaledVector(b, u).addScaledVector(c, v);
-          mark(p);
-        }
-    }
-  }
-  // Only thick things block: a cell needs a good few filled neighbours. A stove pipe, a lamp post
-  // or a thin trunk fills a single column of cells and is fine to look past; a canopy, a roof, a
-  // wall or the old oak fills many.
   const has = (n: number) => (bits[n >> 3]! & (1 << (n & 7))) !== 0;
   const thick = new Uint8Array(bits.length);
-  for (const n of cells) {
-    const i = n % nx, j = Math.floor(n / nx) % ny, k = Math.floor(n / (nx * ny));
-    let around = 0;
-    for (let dk = -1; dk <= 1; dk++)
-      for (let dj = -1; dj <= 1; dj++)
-        for (let di = -1; di <= 1; di++) {
-          if (!di && !dj && !dk) continue;
-          const ii = i + di, jj = j + dj, kk = k + dk;
-          if (ii < 0 || jj < 0 || kk < 0 || ii >= nx || jj >= ny || kk >= nz) continue;
-          if (has((kk * ny + jj) * nx + ii)) around++;
-        }
-    if (around >= 6) thick[n >> 3]! |= 1 << (n & 7);
+  let ready = false;
+  function* fill(): Generator<void> {
+    for (const m of meshes) {
+      const pos = m.geometry.attributes.position!;
+      const index = m.geometry.index;
+      const tris = index ? index.count / 3 : pos.count / 3;
+      for (let t = 0; t < tris; t++) {
+        if ((t & 63) === 63) yield;
+        const ia = index ? index.getX(t * 3) : t * 3;
+        const ib = index ? index.getX(t * 3 + 1) : t * 3 + 1;
+        const ic = index ? index.getX(t * 3 + 2) : t * 3 + 2;
+        a.fromBufferAttribute(pos, ia).applyMatrix4(m.matrixWorld);
+        b.fromBufferAttribute(pos, ib).applyMatrix4(m.matrixWorld);
+        c.fromBufferAttribute(pos, ic).applyMatrix4(m.matrixWorld);
+        // Sample the triangle finely enough that no cell it passes through is missed.
+        const longest = Math.max(a.distanceTo(b), b.distanceTo(c), c.distanceTo(a));
+        const n = Math.max(1, Math.ceil(longest / (CELL * 0.5)));
+        for (let i = 0; i <= n; i++)
+          for (let j = 0; j <= n - i; j++) {
+            const u = i / n, v = j / n;
+            p.copy(a).multiplyScalar(1 - u - v).addScaledVector(b, u).addScaledVector(c, v);
+            mark(p);
+          }
+      }
+    }
+    // Only thick things block: a cell needs a good few filled neighbours. A stove pipe, a lamp post
+    // or a thin trunk fills a single column of cells and is fine to look past; a canopy, a roof, a
+    // wall or the old oak fills many.
+    for (let x = 0; x < cells.length; x++) {
+      if ((x & 1023) === 1023) yield;
+      const n = cells[x]!;
+      const i = n % nx, j = Math.floor(n / nx) % ny, k = Math.floor(n / (nx * ny));
+      let around = 0;
+      for (let dk = -1; dk <= 1; dk++)
+        for (let dj = -1; dj <= 1; dj++)
+          for (let di = -1; di <= 1; di++) {
+            if (!di && !dj && !dk) continue;
+            const ii = i + di, jj = j + dj, kk = k + dk;
+            if (ii < 0 || jj < 0 || kk < 0 || ii >= nx || jj >= ny || kk >= nz) continue;
+            if (has((kk * ny + jj) * nx + ii)) around++;
+          }
+      if (around >= 6) thick[n >> 3]! |= 1 << (n & 7);
+    }
   }
+  inSlices(fill(), () => (ready = true));
   const solid = (q: THREE.Vector3) => {
     const n = idx(q.x, q.y, q.z);
     return n >= 0 && (thick[n >> 3]! & (1 << (n & 7))) !== 0;
@@ -106,11 +134,16 @@ export function createClearance(root: THREE.Object3D, heightAt: (x: number, z: n
     return solid(q);
   };
   return {
-    filled,
+    get filled() {
+      return filled;
+    },
+    get ready() {
+      return ready;
+    },
     clearDist(target, cam) {
       dir.subVectors(cam, target);
       const full = dir.length();
-      if (full < 1e-3) return full;
+      if (full < 1e-3 || !ready) return full;
       dir.divideScalar(full);
       // Side lines 0.5 m either way: a pipe, a post or a thin trunk only crosses the middle one.
       side.crossVectors(dir, UP);

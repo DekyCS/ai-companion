@@ -7,11 +7,13 @@
 // paddle, stand) with ?dist=3 (and ?table=0.55 to put her paws on a table for work; ?act=dam, crusts or
 // pea for what is in her paws; at a ?spot she keeps its facing and table), ?cam=x,y,z,tx,ty,tz (three.js; add ?clear to keep it out of trees
 // like the normal camera), ?play starts as the hedgehog, ?train=8 brings a train in 8 s after load,
-// ?lite drops ambient occlusion and thins the grass for slow machines, ?villagers=all shows every
-// villager at their first spot whatever the sim says.
+// ?lite drops ambient occlusion and thins the grass for slow machines (phones get it by themselves;
+// ?lite=0 keeps a phone on full quality), ?hq keeps full quality even when frames are slow,
+// ?villagers=all shows every villager at their first spot whatever the sim says.
 
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CHIMNEYS, PATHS, SPOTS, VILLAGER_SPOTS, nodes, placeXY, type Spot, type XY } from '../src/world/layout.ts';
 import { PLACES, type PlaceId } from '../src/world/places.ts';
@@ -73,7 +75,12 @@ const damp = (a: number, b: number, rate: number, dt: number) => a + (b - a) * (
 const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
 const params = new URLSearchParams(location.search);
-const lite = params.has('lite');
+// Quality. ?lite (and any phone or tablet: a coarse pointer, unless ?lite=0) starts lite: no ambient
+// occlusion, pixel ratio 1, thinner grass and fur, and the hedgehog fetched only when you first walk.
+// ?hq keeps everything on. Otherwise a slow frame rate turns things down as it goes (see adaptQuality).
+const hq = params.has('hq');
+const liteAsked = params.has('lite') && params.get('lite') !== '0';
+const lite = !hq && (liteAsked || (!params.has('lite') && matchMedia('(pointer: coarse)').matches));
 const forcedHour = params.has('hour') ? Number(params.get('hour')) : null;
 const forcedWeather = params.get('weather') as Weather | null;
 
@@ -136,14 +143,27 @@ function route(from: string, to: string): string[] {
 }
 
 // ---------- loading ----------
+// The models are meshopt-compressed (npm run pack), hence the decoder. Each is asked for with its
+// content hash (from the server, src/static.ts), so the browser can keep it until it changes.
+const ART_V = ((): Record<string, string> => {
+  try {
+    return JSON.parse(document.querySelector('meta[name="khina-art"]')?.getAttribute('content') ?? '{}');
+  } catch {
+    return {};
+  }
+})();
+const art = (file: string) => `/art/export/${file}${ART_V[file] ? `?v=${ART_V[file]}` : ''}`;
 const loader = new GLTFLoader();
+loader.setMeshoptDecoder(MeshoptDecoder);
+/** Lite (unless ?play) leaves the hedgehog until you first want to walk: see loadVisitor. */
+const lazyVisitor = lite && !params.has('play');
 const [terrain, village, khinaGltf, visitorGltf, villagersGltf, trainGltf] = await Promise.all([
-  loadTerrain(),
-  loader.loadAsync('/art/export/village.glb'),
-  loader.loadAsync('/art/export/khina.glb'),
-  loader.loadAsync('/art/export/visitor.glb').catch(() => null),
-  loader.loadAsync('/art/export/villagers.glb').catch(() => null),
-  loader.loadAsync('/art/export/train.glb').catch(() => null),
+  loadTerrain(art('terrain.json')),
+  loader.loadAsync(art('village.glb')),
+  loader.loadAsync(art('khina.glb')),
+  lazyVisitor ? null : loader.loadAsync(art('visitor.glb')).catch(() => null),
+  loader.loadAsync(art('villagers.glb')).catch(() => null),
+  loader.loadAsync(art('train.glb')).catch(() => null),
 ]);
 const byName = (root: THREE.Object3D, name: string) => root.getObjectByName(name) ?? root.getObjectByName(name.replace(/\./g, ''));
 const groundY = (p: THREE.Vector3) => terrain.heightAt(p.x, -p.z);
@@ -246,7 +266,8 @@ controls.addEventListener('start', () => {
 
 // ---------- sound (off until the visitor turns it on) ----------
 const sound = createSound();
-if (!lite) mountSoundButton(document.getElementById('soundBtn') as HTMLButtonElement, sound);
+// A phone that is lite only by itself keeps its sound button; ?lite asked for by hand drops it, as before.
+if (!liteAsked) mountSoundButton(document.getElementById('soundBtn') as HTMLButtonElement, sound);
 /** Points along the water (the stream), to know how near the camera is to it. */
 const waterPts: THREE.Vector3[] = [];
 village.scene.updateMatrixWorld(true);
@@ -292,7 +313,9 @@ K.traverse((o) => {
     mat.userData.glow = [0.2, 0.85];
   }
 });
-addFuzz(K, { layers: lite ? 12 : 20 });
+// 16 shells look like 20 even from as close as the camera comes (12 thins the fringe a little there);
+// on a phone screen 10 keep the fibres at her edge that 8 smudge.
+addFuzz(K, { layers: lite ? 10 : 16 });
 const part = (name: string) => byName(K, name) ?? new THREE.Object3D();
 const body = part('BodyPivot');
 const head = part('HeadPivot');
@@ -348,10 +371,11 @@ const HOP_PACE = 0.75;
 
 // ---------- you ----------
 let player: Player | null = null;
-if (visitorGltf) {
-  player = createPlayer(visitorGltf.scene, terrain);
-  addFuzz(visitorGltf.scene, { layers: lite ? 10 : 16 });
-  visitorGltf.scene.traverse((o) => {
+/** The hedgehog, ready to go into the scene. */
+function makeVisitor(gltf: GLTF): Player {
+  const p = createPlayer(gltf.scene, terrain);
+  addFuzz(gltf.scene, { layers: lite ? 8 : 12 });
+  gltf.scene.traverse((o) => {
     if (!(o instanceof THREE.Mesh)) return;
     const mat = o.material as THREE.MeshStandardMaterial;
     if (mat.name === 'Eye') {
@@ -361,8 +385,28 @@ if (visitorGltf) {
     if (mat.name === 'Shine') shineMats.add(mat);
   });
   const at = (params.get('at') ?? '3.5,-2.5').split(',').map(Number);
-  player.placeAt(at[0] ?? 3.5, at[1] ?? -2.5);
+  p.placeAt(at[0] ?? 3.5, at[1] ?? -2.5);
+  return p;
+}
+if (visitorGltf) {
+  player = makeVisitor(visitorGltf);
   scene.add(player.object);
+}
+/** Lite: fetches the hedgehog the first time you want to walk, its shaders compiled off the main thread. */
+let visitorLoad: Promise<void> | null = null;
+function loadVisitor(): Promise<void> {
+  visitorLoad ??= loader
+    .loadAsync(art('visitor.glb'))
+    .then(async (gltf) => {
+      const p = makeVisitor(gltf);
+      await renderer.compileAsync(p.object, camera, scene).catch(() => undefined);
+      scene.add(p.object);
+      player = p;
+    })
+    .catch(() => {
+      visitorLoad = null; // try again on the next "Walk around"
+    });
+  return visitorLoad;
 }
 // ---------- the neighbours ----------
 // Bramwell, Old Wren, Tansy, Pip and Nettle, the voles and the traveller, each shown at their spot
@@ -683,7 +727,7 @@ scene.add(flies);
 // ---------- HUD ----------
 // ?mock fills the HUD with made-up pieces and readings, to check it without the model.
 const mock = params.has('mock') ? await import('./mock.ts') : null;
-const hud = createHud({ canWalk: !!player, onMode: (m) => setMode(m) });
+const hud = createHud({ canWalk: !!player || lazyVisitor, onMode: (m) => setMode(m) });
 if (mock) {
   hud.setSource(mock.mockSource(0));
   setTimeout(() => {
@@ -693,6 +737,11 @@ if (mock) {
 }
 
 function setMode(next: Mode) {
+  if (next === 'player' && !player) {
+    // Lite: the hedgehog comes now, and you take it over as soon as it is here.
+    if (lazyVisitor) void loadVisitor().then(() => player && setMode('player'));
+    return;
+  }
   mode = next;
   hud.setMode(mode);
   if (mode === 'player' && player) {
@@ -708,6 +757,17 @@ function setMode(next: Mode) {
   renderer.domElement.focus();
 }
 setMode(mode);
+if (lazyVisitor) {
+  // The keys that walk the hedgehog (web/player.ts) fetch it first; it listens for itself after that.
+  const walkKey = (e: KeyboardEvent) => {
+    const el = document.activeElement as HTMLElement | null;
+    if (e.metaKey || e.ctrlKey || e.altKey || !/^(Key[WASD]|Arrow(Up|Down|Left|Right)|Space)$/.test(e.code)) return;
+    if (el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable)) return;
+    removeEventListener('keydown', walkKey);
+    setMode('player');
+  };
+  addEventListener('keydown', walkKey);
+}
 
 // ---------- following the sim ----------
 let snap: Snap | null = null;
@@ -716,6 +776,8 @@ let clockAt = 0;
 interface Plan { key: string; pts: THREE.Vector3[]; cum: number[]; start: number; end: number }
 let plan: Plan | null = null;
 let placed = false;
+/** Set by the first frame: "Waking up the village…" stays until then, even if the sim has answered. */
+let drawing = false;
 
 /** The game clock, moving smoothly between the server's once-a-second ticks. */
 function gameNow(): number {
@@ -794,7 +856,7 @@ function onSnap(next: Snap) {
     }
   }
   hud.update(mock ? mock.mockSnap(next) : next);
-  document.getElementById('status')!.textContent = '';
+  if (drawing) document.getElementById('status')!.textContent = '';
   if (!params.has('clean')) hud.show();
 }
 
@@ -1551,12 +1613,70 @@ function clearView(target: THREE.Vector3, off: THREE.Vector3, wide = 2): boolean
   return off.lengthSq() > 0;
 }
 
+// ---------- quality that follows the frame rate ----------
+// After the first few seconds, two 2-second spells in a row under 50 frames a second turn one thing down
+// (one slow spell is more likely a hitch than a slow machine), the least missed first: ambient
+// occlusion, then the extra pixels of a sharp screen, then multisampling. One step at a time, a second
+// to settle in between, and never back up in the same visit (it would only go back and forth).
+// ?hq never steps down. window.quality says where it got to.
+const STEPS: { name: string; can: () => boolean; drop: () => void }[] = [
+  { name: 'ambient occlusion', can: () => look.ao, drop: () => look.dropAO() },
+  { name: 'pixel ratio 1', can: () => renderer.getPixelRatio() > 1, drop: () => look.setPixelRatio(1) },
+  { name: 'multisampling', can: () => look.msaa, drop: () => look.dropMSAA() },
+];
+const quality = { dropped: [] as string[], fps: 0 };
+(window as unknown as { quality: typeof quality }).quality = quality;
+let adaptFrom = 0;
+let adaptFrames = 0;
+let adaptQuiet = 0;
+let slowSpells = 0;
+function adaptQuality(t: number, dtMs: number) {
+  if (hq) return;
+  adaptQuiet ||= t + 3000;
+  // Warming up or settling, a hidden tab, or one long hitch (a big load): start the count again.
+  if (t < adaptQuiet || document.hidden || dtMs > 400) {
+    adaptFrom = t;
+    adaptFrames = 0;
+    return;
+  }
+  adaptFrames++;
+  if (t - adaptFrom < 2000) return;
+  quality.fps = Math.round((adaptFrames * 1000) / (t - adaptFrom));
+  adaptFrom = t;
+  adaptFrames = 0;
+  if (quality.fps >= 50) {
+    slowSpells = 0;
+    return;
+  }
+  if (++slowSpells < 2) return;
+  slowSpells = 0;
+  const step = STEPS.find((s) => s.can());
+  if (!step) return;
+  step.drop();
+  quality.dropped.push(step.name);
+  console.info(`quality: ${quality.fps} fps, turned off ${step.name}`);
+  adaptQuiet = t + 1000;
+}
+
+// Every shader is compiled before the first frame, by the browser in the background where it can
+// (KHR_parallel_shader_compile), instead of stalling the first frames. The sky goes first, so the
+// shaders are the ones that see its light. Hidden things (the villagers, the train) count too.
+look.update(forcedHour !== null ? forcedHour * 60 : gameNow(), forcedWeather ?? 'clear', controls.target, 0);
+performance.mark('khina:compile');
+await Promise.race([renderer.compileAsync(scene, camera).catch(() => undefined), new Promise((r) => setTimeout(r, 5000))]);
+
 let last = performance.now();
 let frames = 0;
 let fpsFrom = last;
 renderer.setAnimationLoop(() => {
   const t = performance.now();
   frame(t - last);
+  if (!drawing) {
+    drawing = true;
+    performance.mark('khina:first-frame');
+    if (snap) document.getElementById('status')!.textContent = '';
+  }
+  adaptQuality(t, t - last);
   last = t;
   frames++;
   if (t - fpsFrom > 2000) {

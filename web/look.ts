@@ -125,6 +125,12 @@ export interface Look {
   update(gameMinutes: number, weather: Weather, focus: THREE.Vector3, dt: number): void;
   render(): void;
   resize(): void;
+  /** Whether ambient occlusion and multisampling are still on (web/main.ts turns them off when frames are slow). */
+  readonly ao: boolean;
+  readonly msaa: boolean;
+  dropAO(): void;
+  dropMSAA(): void;
+  setPixelRatio(ratio: number): void;
 }
 
 export function createLook(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, opts: { ao?: boolean; quality?: number } = {}): Look {
@@ -275,6 +281,30 @@ export function createLook(renderer: THREE.WebGLRenderer, scene: THREE.Scene, ca
       composer.setSize(innerWidth, innerHeight);
       gtao?.setSize(s.x, s.y);
       bloom.setSize(s.x / 2, s.y / 2);
+    },
+    get ao() {
+      return gtao !== null;
+    },
+    get msaa() {
+      return composer.renderTarget1.samples > 0;
+    },
+    dropAO() {
+      if (!gtao) return;
+      composer.removePass(gtao);
+      gtao.dispose();
+      gtao = null;
+    },
+    dropMSAA() {
+      // The targets are set up again, without samples, the next time they are drawn to.
+      for (const rt of [composer.renderTarget1, composer.renderTarget2]) {
+        rt.samples = 0;
+        rt.dispose();
+      }
+    },
+    setPixelRatio(ratio) {
+      renderer.setPixelRatio(ratio);
+      composer.setPixelRatio(ratio);
+      look.resize();
     },
   };
   return look;
